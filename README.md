@@ -38,6 +38,7 @@ Vòng đời một bài viết, xem ở cột `status`:
 ## 2. Thành phần trong repo
 
 ```
+docker-compose.yml                           Chạy n8n bằng Docker (không cần Node trên máy)
 n8n/workflows/01-collect-source-posts.json   Thu link bài từ page nguồn → ghi vào sheet
 n8n/workflows/02-check-and-publish.json      Kiểm tra đủ thành phần + đăng lên Page
 n8n/workflows/03-publish-queue.json          Quét sheet mỗi 5 phút: tick ô / hẹn giờ
@@ -70,6 +71,14 @@ Chi tiết từng bước ở `docs/`, thứ tự nên làm:
    credential (Google Sheets, Google Drive, Facebook Graph API), điền node
    `Config`, activate.
 5. **[docs/05-van-hanh.md](docs/05-van-hanh.md)** — quy trình dùng hàng ngày.
+
+Chạy n8n ở máy mình (Docker / npm / Cloud) và xử lý lỗi `n8n: command not found`:
+**[docs/07-chay-n8n-local.md](docs/07-chay-n8n-local.md)**. Nhanh nhất:
+
+```bash
+docker compose up -d
+docker compose exec n8n n8n import:workflow --separate --input=/workflows
+```
 
 Gặp lỗi: **[docs/06-troubleshooting.md](docs/06-troubleshooting.md)** — tra theo
 thông báo trong cột `check_note`.

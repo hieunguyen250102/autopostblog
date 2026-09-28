@@ -1,0 +1,35 @@
+# Chạy n8n bằng Docker — không phụ thuộc Node.js trên máy.
+#
+#   docker compose up -d
+#   docker compose logs -f n8n
+#
+# Mở http://localhost:5678
+#
+# Biến môi trường đọc từ file .env cùng thư mục (xem .env.example).
+# Quan trọng: WEBHOOK_URL phải là URL CÔNG KHAI nếu muốn Google Apps Script
+# gọi được webhook — xem docs/07-chay-n8n-local.md.
+
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - '5678:5678'
+    environment:
+      GENERIC_TIMEZONE: ${GENERIC_TIMEZONE:-Asia/Ho_Chi_Minh}
+      TZ: ${GENERIC_TIMEZONE:-Asia/Ho_Chi_Minh}
+      # URL bên ngoài của n8n. Khi mở tunnel, đổi thành URL của tunnel rồi
+      # `docker compose up -d` lại.
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+      # Cho phép đăng nhập UI qua http (localhost / LAN). Nếu chạy sau https thì để true.
+      N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-false}
+      N8N_DIAGNOSTICS_ENABLED: 'false'
+    volumes:
+      - n8n_data:/home/node/.n8n
+      # Mount workflow của repo để import bằng CLI:
+      #   docker compose exec n8n n8n import:workflow --separate --input=/workflows
+      - ./n8n/workflows:/workflows:ro
+
+volumes:
+  n8n_data:
