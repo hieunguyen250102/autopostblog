@@ -1,0 +1,497 @@
+{
+  "name": "AutoPost 01 - Thu bai tu page nguon",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "b03337e8-10d4-372b-0333-7e810d437200",
+      "name": "Mỗi 2 giờ",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        110
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "2fdf3884-114a-0d22-fdf3-884114a0d200",
+      "name": "Chạy thử thủ công",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "autopost-collect",
+        "responseMode": "onReceived",
+        "responseData": "noData",
+        "options": {}
+      },
+      "id": "2864e0d4-1027-2e82-864e-0d410272e800",
+      "name": "Webhook: Thu bài",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        490
+      ],
+      "webhookId": "9ddafa01-0266-939d-dafa-010266930000"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "sheet_id",
+              "value": "DAN_GOOGLE_SHEET_ID_VAO_DAY",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "graph_version",
+              "value": "v21.0",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "timezone",
+              "value": "Asia/Ho_Chi_Minh",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "default_max_posts",
+              "value": 5,
+              "type": "number"
+            },
+            {
+              "id": "a5",
+              "name": "post_id_prefix",
+              "value": "AP",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "1dc779d8-101a-12c1-dc77-9d8101a12c00",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        300
+      ],
+      "notes": "SỬA Ở ĐÂY: sheet_id + múi giờ",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "ec4e8f8c-108e-45ce-c4e8-f8c108e45c00",
+      "name": "Sheets: Đọc Posts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        740,
+        300
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2 (hoặc Service Account).",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz) => {\n  const d = new Date();\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\nconst cfg = $('Config').first().json;\nconst rows = $input.all().map((i) => i.json).filter((r) => r && Object.keys(r).length);\nconst keys = [];\nlet maxNum = 0;\nfor (const r of rows) {\n  for (const k of ['source_post_id', 'source_post_url']) {\n    const v = String(r[k] ?? '').trim();\n    if (v) keys.push(v);\n  }\n  const m = String(r.post_id ?? '').trim().match(/(\\d+)\\s*$/);\n  if (m) maxNum = Math.max(maxNum, Number(m[1]));\n}\nreturn [{ json: { ...cfg, existing_keys: keys, max_post_number: maxNum, existing_rows: rows.length } }];\n"
+      },
+      "id": "495e9c38-1027-d2f4-95e9-c381027d2f00",
+      "name": "Gom bài đã có",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sources",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "f9bd6af8-1091-52df-9bd6-af8109152d00",
+      "name": "Sheets: Đọc Sources",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1220,
+        300
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2 (hoặc Service Account).",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz) => {\n  const d = new Date();\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\nconst cfg = $('Config').first().json;\nconst out = [];\n$input.all().forEach((item, index) => {\n  const r = item.json || {};\n  if (!isTruthy(r.active)) return;\n  const ref = String(r.page_id_or_url ?? '').trim();\n  const mode = String(r.mode ?? 'graph').trim().toLowerCase() || 'graph';\n  const feedUrl = String(r.feed_url ?? '').trim();\n  if (mode === 'rss' && !feedUrl) return;\n  if (mode !== 'rss' && !ref) return;\n  // Chấp nhận dán cả URL page: lấy phần cuối làm id/username.\n  let pageRef = ref;\n  const m = ref.match(/facebook\\.com\\/(?:profile\\.php\\?id=)?([^/?#]+)/i);\n  if (m) pageRef = m[1];\n  pageRef = pageRef.replace(/^@/, '');\n  const max = Number(r.max_posts) > 0 ? Number(r.max_posts) : Number(cfg.default_max_posts) || 5;\n  out.push({\n    json: {\n      row_number: rowNumberOf(r, index),\n      source_name: String(r.source_name ?? pageRef).trim() || pageRef,\n      page_ref: pageRef,\n      mode,\n      feed_url: feedUrl,\n      max_posts: Math.min(max, 25),\n    },\n  });\n});\nif (!out.length) throw new Error('Sheet \"Sources\" chưa có nguồn nào bật active = TRUE');\nreturn out;\n"
+      },
+      "id": "3d494131-152a-a73d-4941-31152aa70000",
+      "name": "Lọc nguồn đang bật",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c0",
+              "leftValue": "={{ $json.mode }}",
+              "rightValue": "rss",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "9ccfacb6-107b-6979-ccfa-cb6107b69700",
+      "name": "Nguồn là RSS?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1700,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.feed_url }}",
+        "options": {}
+      },
+      "id": "4af59cc1-1071-42c4-af59-cc1107142c00",
+      "name": "Đọc RSS",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1.1,
+      "position": [
+        1940,
+        110
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/{{ $('Config').first().json.graph_version }}/{{ $json.page_ref }}/posts",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "id,message,story,created_time,permalink_url,full_picture,attachments{media_type,url}"
+            },
+            {
+              "name": "limit",
+              "value": "={{ $json.max_posts }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "e1696c5c-1104-84de-1696-c5c110484d00",
+      "name": "Graph: Lấy bài của page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1940,
+        490
+      ],
+      "notes": "Cần chọn credential: Facebook Graph API — dán PAGE ACCESS TOKEN dài hạn.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz) => {\n  const d = new Date();\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Ưu tiên item pairing; nếu node RSS không truyền pairedItem thì suy ra nguồn rss.\nlet src;\ntry {\n  src = $('Lọc nguồn đang bật').item.json;\n} catch (e) {\n  src = null;\n}\nif (!src || src.mode !== 'rss') {\n  const rssSources = $('Lọc nguồn đang bật').all().map((i) => i.json).filter((x) => x.mode === 'rss');\n  src = rssSources.length === 1 ? rssSources[0] : { source_name: src ? src.source_name : 'RSS' };\n}\nconst r = $json;\nconst link = String(r.link ?? r.guid ?? '').trim();\nif (!link) return { json: { __skip: true } };\nreturn {\n  json: {\n    source_page: src.source_name,\n    source_post_url: link,\n    source_post_id: link,\n    title: String(r.title ?? '').trim().slice(0, 300),\n    summary: String(r.contentSnippet ?? r.content ?? '').replace(/\\s+/g, ' ').trim().slice(0, 500),\n    created_time: r.isoDate || r.pubDate || '',\n  },\n};\n"
+      },
+      "id": "c456c808-1081-da7c-456c-8081081da700",
+      "name": "Chuẩn hoá bài RSS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        110
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz) => {\n  const d = new Date();\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Node Graph chỉ nhận nhánh false của IF, nên phải lọc lại đúng danh sách đó\n// để index khớp (nếu lấy cả nguồn rss sẽ gán sai tên page).\nconst sources = $('Lọc nguồn đang bật').all().map((i) => i.json).filter((s) => s.mode !== 'rss');\nconst out = [];\nconst failures = [];\n$input.all().forEach((item, index) => {\n  const src = sources[index] || sources[0] || { source_name: '?' };\n  const body = item.json || {};\n  if (body.error) {\n    failures.push(src.source_name + ': ' + (body.error.message || JSON.stringify(body.error)));\n    return;\n  }\n  const posts = Array.isArray(body.data) ? body.data : [];\n  for (const p of posts) {\n    const text = String(p.message ?? p.story ?? '').replace(/\\s+/g, ' ').trim();\n    out.push({\n      json: {\n        source_page: src.source_name,\n        source_post_url: p.permalink_url || ('https://www.facebook.com/' + String(p.id || '').replace('_', '/posts/')),\n        source_post_id: String(p.id ?? ''),\n        title: text.slice(0, 120),\n        summary: text.slice(0, 500),\n        created_time: p.created_time || '',\n      },\n    });\n  }\n});\n// Một nguồn lỗi không nên chặn các nguồn còn lại; chỉ báo lỗi khi không thu được gì.\nif (!out.length && failures.length) {\n  throw new Error('Graph API lỗi với tất cả nguồn — ' + failures.join(' | '));\n}\nreturn out;\n"
+      },
+      "id": "dca9159c-1085-976d-ca91-59c108597600",
+      "name": "Chuẩn hoá bài Graph",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        490
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz) => {\n  const d = new Date();\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\nconst cfg = $('Config').first().json;\nconst known = $('Gom bài đã có').first().json;\nconst seen = new Set(known.existing_keys || []);\nconst prefix = String(cfg.post_id_prefix || 'AP');\nlet maxNum = Number(known.max_post_number || 0);\nconst stamp = nowIso(cfg.timezone);\nconst rows = [];\nfor (const item of $input.all()) {\n  const p = item.json || {};\n  if (p.__skip) continue;\n  const key = String(p.source_post_id || p.source_post_url || '').trim();\n  if (!key || seen.has(key)) continue;\n  seen.add(key);\n  maxNum += 1;\n  rows.push({\n    json: {\n      post_id: prefix + '-' + String(maxNum).padStart(4, '0'),\n      source_page: p.source_page || '',\n      source_post_url: p.source_post_url || '',\n      source_post_id: p.source_post_id || '',\n      collected_at: stamp,\n      title: p.title || '',\n      summary: p.summary || '',\n      drive_folder_url: '',\n      status: 'NEED_CONTENT',\n      images_count: '',\n      content_chars: '',\n      check_note: 'Chờ dán link folder Drive (nội dung tiếng Anh + ảnh)',\n      scheduled_at: '',\n      posted_at: '',\n      fb_post_id: '',\n      fb_permalink: '',\n      publish_now: false,\n      last_action_at: stamp,\n    },\n  });\n}\nreturn rows;\n"
+      },
+      "id": "59fd86e8-10ee-cab5-9fd8-6e810eecab00",
+      "name": "Bỏ trùng + tạo post_id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      },
+      "id": "431467cc-10a4-2724-3146-7cc10a427200",
+      "name": "Sheets: Thêm bài mới",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2660,
+        300
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2 (hoặc Service Account)."
+    }
+  ],
+  "connections": {
+    "Mỗi 2 giờ": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chạy thử thủ công": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook: Thu bài": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Đọc Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets: Đọc Posts": {
+      "main": [
+        [
+          {
+            "node": "Gom bài đã có",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gom bài đã có": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Đọc Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets: Đọc Sources": {
+      "main": [
+        [
+          {
+            "node": "Lọc nguồn đang bật",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lọc nguồn đang bật": {
+      "main": [
+        [
+          {
+            "node": "Nguồn là RSS?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nguồn là RSS?": {
+      "main": [
+        [
+          {
+            "node": "Đọc RSS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Graph: Lấy bài của page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Đọc RSS": {
+      "main": [
+        [
+          {
+            "node": "Chuẩn hoá bài RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chuẩn hoá bài RSS": {
+      "main": [
+        [
+          {
+            "node": "Bỏ trùng + tạo post_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph: Lấy bài của page": {
+      "main": [
+        [
+          {
+            "node": "Chuẩn hoá bài Graph",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chuẩn hoá bài Graph": {
+      "main": [
+        [
+          {
+            "node": "Bỏ trùng + tạo post_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bỏ trùng + tạo post_id": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Thêm bài mới",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

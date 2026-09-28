@@ -1,0 +1,17 @@
+{
+  "name": "autopostblog",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Auto đăng bài lên Facebook Page bằng n8n + Google Sheet + Google Drive",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "node tools/build-workflows.mjs",
+    "validate": "node tools/validate-workflows.mjs",
+    "check:fb": "node tools/check-facebook.mjs",
+    "test": "node tools/build-workflows.mjs && node tools/validate-workflows.mjs && node tools/test-logic.mjs",
+    "test:logic": "node tools/test-logic.mjs"
+  }
+}

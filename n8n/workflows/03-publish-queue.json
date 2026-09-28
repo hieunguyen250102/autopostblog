@@ -1,0 +1,189 @@
+{
+  "name": "AutoPost 03 - Hang doi dang bai",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "879ce8da-1067-efa8-79ce-8da1067efa00",
+      "name": "Mỗi 5 phút",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a1",
+              "name": "sheet_id",
+              "value": "DAN_GOOGLE_SHEET_ID_VAO_DAY",
+              "type": "string"
+            },
+            {
+              "id": "a2",
+              "name": "publish_url",
+              "value": "https://N8N_CUA_BAN/webhook/autopost-publish",
+              "type": "string"
+            },
+            {
+              "id": "a3",
+              "name": "webhook_secret",
+              "value": "DOI_THANH_CHUOI_BI_MAT_RIENG",
+              "type": "string"
+            },
+            {
+              "id": "a4",
+              "name": "timezone",
+              "value": "Asia/Ho_Chi_Minh",
+              "type": "string"
+            },
+            {
+              "id": "a5",
+              "name": "max_per_run",
+              "value": 3,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "48a7fb04-1015-4754-8a7f-b04101547500",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        300
+      ],
+      "notes": "SỬA Ở ĐÂY: sheet_id, publish_url (webhook của workflow 02), webhook_secret",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "384ae621-1080-c013-84ae-6211080c0100",
+      "name": "Sheets: Đọc Posts",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        740,
+        300
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2 (hoặc Service Account).",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz) => {\n  const d = new Date();\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\nconst cfg = $('Config').first().json;\nconst limit = Number(cfg.max_per_run ?? 3);\nconst tz = cfg.timezone;\nconst now = nowIso(tz);\n\nconst picked = [];\n$input.all().forEach((item, index) => {\n  const r = item.json || {};\n  if (!Object.keys(r).length) return;\n  const postId = String(r.post_id ?? '').trim();\n  if (!postId) return;\n  const status = String(r.status ?? '').trim().toUpperCase();\n  if (['POSTED', 'POSTING', 'SKIP'].includes(status)) return;\n\n  const manual = isTruthy(r.publish_now);\n  const scheduledRaw = String(r.scheduled_at ?? '').trim();\n  let scheduledDue = false;\n  if (scheduledRaw) {\n    // Hỗ trợ \"2026-01-31 08:30\" hoặc ISO; so sánh dạng chuỗi theo cùng múi giờ.\n    const norm = scheduledRaw.replace('T', ' ').slice(0, 19);\n    scheduledDue = norm <= now;\n  }\n  if (!manual && !scheduledDue) return;\n\n  picked.push({ json: {\n    post_id: postId,\n    row_number: rowNumberOf(r, index),\n    reason: manual ? 'tick ô publish_now' : 'đến hạn ' + scheduledRaw,\n    secret: cfg.webhook_secret,\n    action: 'publish',\n    publish_url: cfg.publish_url,\n  } });\n});\nreturn picked.slice(0, limit);\n"
+      },
+      "id": "f90cfe50-1137-977f-90cf-e50113797700",
+      "name": "Chọn bài đến hạn",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.publish_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ post_id: $json.post_id, row_number: $json.row_number, action: \"publish\", secret: $json.secret }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 4000
+            }
+          },
+          "timeout": 180000
+        }
+      },
+      "id": "8c13d6d5-1079-3d38-c13d-6d510793d300",
+      "name": "Gọi webhook đăng bài",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1220,
+        300
+      ],
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Mỗi 5 phút": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Đọc Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets: Đọc Posts": {
+      "main": [
+        [
+          {
+            "node": "Chọn bài đến hạn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chọn bài đến hạn": {
+      "main": [
+        [
+          {
+            "node": "Gọi webhook đăng bài",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
