@@ -4,18 +4,58 @@
 
 Không phụ thuộc Node.js trên máy, không lo version.
 
+### Bước 0 — KIỂM TRA trước khi cài gì cả
+
 ```bash
-# 1. Cài Docker (Ubuntu) nếu chưa có
+docker --version
+docker compose version
+```
+
+Nếu cả hai lệnh in ra version thì **bỏ qua phần cài đặt**, nhảy xuống bước 2.
+
+> ⚠️ **Không chạy `apt-get install docker.io docker-compose-v2` khi máy đã có
+> Docker CE** (bản cài từ repo chính thức của Docker, `docker-ce` /
+> `docker-compose-plugin`). Hai bộ gói này xung đột file: apt sẽ **xoá
+> `docker-ce`, `docker-ce-cli`, `containerd.io`** rồi fail giữa đường với lỗi
+> `trying to overwrite '/usr/libexec/docker/cli-plugins/docker-compose'`,
+> để lại máy ở trạng thái Docker hỏng. Cách gỡ: xem
+> [mục "Sửa khi đã cài lẫn docker.io và docker-ce"](#sửa-khi-đã-cài-lẫn-dockerio-và-docker-ce)
+> ở cuối file.
+
+### Bước 1 — Cài Docker (chỉ khi bước 0 báo không có)
+
+Dùng **một trong hai**, đừng trộn:
+
+```bash
+# Cách 1 — bản của Ubuntu, đơn giản
 sudo apt-get update
 sudo apt-get install -y docker.io docker-compose-v2
-sudo usermod -aG docker $USER      # để không phải sudo mỗi lần
-newgrp docker                      # hoặc logout/login lại
+```
 
-# 2. Chạy n8n từ trong repo
+```bash
+# Cách 2 — bản chính thức của Docker, mới hơn
+curl -fsSL https://get.docker.com | sudo sh
+```
+
+Rồi cho user vào group `docker` để không phải `sudo` mỗi lệnh:
+
+```bash
+sudo usermod -aG docker $USER
+newgrp docker                      # hoặc logout/login lại
+docker run --rm hello-world        # xác nhận chạy được không cần sudo
+```
+
+### Bước 2 — Chạy n8n từ trong repo
+
+```bash
 cd ~/workspace/autopostblog
+git pull                           # cần có docker-compose.yml trong repo
 docker compose up -d
 docker compose logs -f n8n         # Ctrl+C để thoát log
 ```
+
+> `no configuration file provided: not found` = đang đứng sai thư mục, hoặc chưa
+> `git pull` nên repo chưa có `docker-compose.yml`. Kiểm tra: `ls docker-compose.yml`.
 
 Mở <http://localhost:5678> → tạo tài khoản owner (chỉ lần đầu, lưu trong volume).
 
@@ -151,6 +191,48 @@ n8n start
 
 Dữ liệu nằm ở `~/.n8n/` (database SQLite + credential đã mã hoá). Muốn xoá sạch để
 làm lại: `rm -rf ~/.n8n` (mất hết credential, phải tạo lại).
+
+---
+
+## Sửa khi đã cài lẫn docker.io và docker-ce
+
+Dấu hiệu: apt báo `trying to overwrite '/usr/libexec/docker/cli-plugins/docker-compose',
+which is also in package docker-compose-plugin`, kèm `usermod: group 'docker' does not
+exist` — vì `docker.io` bị unpack nhưng chưa configure xong nên group chưa được tạo.
+
+Chọn **giữ Docker CE** (khuyến nghị nếu trước đó bạn cài từ repo chính thức):
+
+```bash
+# 1. Bỏ các gói bản Ubuntu đang dở dang
+sudo dpkg --remove --force-remove-reinstreq docker-compose-v2 docker.io || true
+sudo apt-get purge -y docker.io docker-compose-v2
+sudo apt-get autoremove -y
+
+# 2. Cài lại bộ Docker CE đã bị apt xoá
+sudo apt-get update
+sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# 3. Bật service + kiểm tra
+sudo systemctl enable --now docker
+docker --version
+docker compose version
+docker run --rm hello-world
+
+# 4. Group docker (giờ đã tồn tại) — bước này trước đó bị fail
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+Hoặc **giữ bản Ubuntu** thì làm ngược lại: gỡ sạch `docker-ce*`,
+`docker-compose-plugin`, `containerd.io` rồi
+`sudo apt-get install -y docker.io docker-compose-v2`.
+
+Nếu apt vẫn báo broken sau khi gỡ:
+
+```bash
+sudo apt-get install -f -y
+sudo dpkg --configure -a
+```
 
 ---
 
