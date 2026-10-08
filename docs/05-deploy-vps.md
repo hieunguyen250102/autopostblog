@@ -265,7 +265,7 @@ File `.tgz` chứa khoá giải mã credential — xoá ngay sau khi chuyển xo
 
 ## 8. Kiểm tra sau khi deploy
 
-1. n8n → workflow → **Execute workflow** → chọn *Mỗi 4 giờ: thu bài* → execution xanh,
+1. n8n → workflow → **Execute workflow** → chọn *Thu bài: kiểm tra mỗi 5 phút* → execution xanh,
    tab `Posts` có dòng mới `NEED_TRANSLATE`.
 2. Chờ ≤ 5 phút → dòng đó thành `REVIEW`, có `en_text`.
 3. Tick `publish_now` một bài → ≤ 2 phút sau `POSTED` + có `fb_permalink`.

@@ -6,7 +6,7 @@ dịch, tick một ô là bài lên Page — ảnh lấy từ bài gốc.
 
 ```mermaid
 flowchart LR
-    A[Page nguồn] -->|fb-crawler<br/>mỗi 4 giờ| B[(Google Sheet<br/>tab Posts)]
+    A[Page nguồn] -->|fb-crawler<br/>theo lịch ở tab Settings| B[(Google Sheet<br/>tab Posts)]
     B -->|mỗi 5 phút| G[Gemini API]
     G -->|en_text, REVIEW| B
     B -->|bạn duyệt, tick publish_now<br/>mỗi 2 phút đăng 1 bài| F[Facebook Page]
@@ -35,7 +35,7 @@ Tất cả nằm trong **một workflow n8n** (`n8n/workflows/autopost.json`) v�
 
 Dùng hằng ngày & tra lỗi: **[docs/04-van-hanh-va-loi.md](docs/04-van-hanh-va-loi.md)**.
 Chạy 24/7 trên server: **[docs/05-deploy-vps.md](docs/05-deploy-vps.md)**.
-Đổi giờ thu bài / dịch / đăng: docs/03 mục 7.
+Đổi giờ thu bài / dịch / đăng: sửa tab **`Settings`** trong Sheet (docs/02 mục 5).
 
 ## Thành phần
 

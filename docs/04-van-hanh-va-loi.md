@@ -2,7 +2,8 @@
 
 ## Một vòng làm việc
 
-1. **Máy tự làm:** 4 giờ/lần thu bài mới từ các page trong `Sources`, rồi Gemini dịch
+1. **Máy tự làm:** thu bài mới từ các page trong `Sources` theo lịch ở tab `Settings`
+   (mặc định 4 giờ/lần), rồi Gemini dịch
    trong ≤ 5 phút. Bài hiện ở `Posts` với `status = REVIEW`.
 2. **Bạn duyệt:** đọc `en_text` (bấm vào ô để xem đủ), sửa nếu cần. Xem ảnh: bấm link
    trong `source_images`; xoá dòng link nào là bỏ ảnh đó.
@@ -35,7 +36,7 @@ Không muốn đăng bài nào: đặt `status = SKIP`.
 | `❌ Gemini không dịch được / không trả bản dịch` | Bị chặn nội dung hoặc sai `gemini_model`. Dịch tay: menu 🌐 Dịch bằng AI (web). |
 | `❌ Chưa có bản dịch ở en_text` | Tick đăng khi chưa dịch xong — chờ `REVIEW` rồi tick lại. |
 | `❌ Nội dung quá ngắn` | `en_text` < `min_content_chars` ký tự. |
-| `❌ Thiếu ảnh` | Bài gốc không có ảnh. Thêm link ảnh vào `source_images`, hoặc `min_images = 0` trong `Config`. |
+| `❌ Thiếu ảnh` | Bài gốc không có ảnh. Thêm link ảnh vào `source_images`, hoặc `min_images = 0` ở tab `Settings`. |
 | `❌ Facebook từ chối: … tải ảnh 1 lỗi: 403` | Link ảnh gốc hết hạn. Mở bài gốc → chuột phải ảnh → *Sao chép địa chỉ hình ảnh* → dán lại vào `source_images`. |
 | `❌ Facebook từ chối: … upload ảnh 2 lỗi: …` | Facebook không nhận ảnh đó — xoá link ảnh đó rồi tick lại. |
 | `❌ Facebook từ chối: … (code 190) … expired` | Page token hết hạn/bị thu hồi — lấy token mới (docs/01), cập nhật credential Facebook. |
@@ -52,6 +53,7 @@ Không muốn đăng bài nào: đặt `status = SKIP`.
 | `… không lấy được bài nào` | Link page sai, page bị ẩn/giới hạn tuổi, hoặc Facebook chặn tạm. Mở link trong trình duyệt ẩn danh để kiểm tra. |
 | `… Facebook yêu cầu đăng nhập/xác minh` | Chỉ khi dùng cookie: tài khoản bị checkpoint — xử lý trên trình duyệt thường rồi xuất lại cookie, hoặc xoá file cookie để chạy không đăng nhập. |
 | `Tab "Sources" chưa có page nào bật active` | Tick `active` ít nhất một page. |
+| Lâu không thấy bài mới / bài tick không lên, execution xanh dừng ở node *Cài đặt* | Chưa đến lịch theo tab `Settings` — xem `crawl_times`, `publish_hours`, `publish_gap_minutes` (có chữ `tắt`?). Output node *Cài đặt* có `schedule_note` và `settings_warnings` |
 | Node `Sheets: …` lỗi quyền / không tìm thấy | Credential Google Sheets không phải tài khoản sở hữu Sheet, hoặc sai `sheet_id`. |
 
 Xem log crawler: `docker compose logs -f fb-crawler`.

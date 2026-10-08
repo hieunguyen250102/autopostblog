@@ -68,22 +68,29 @@ Mở từng node có ghi chú *Cần chọn credential* và chọn:
 
 ## 5. Bật
 
-Bật toggle **Active** của workflow. Ba lịch chạy cùng lúc:
+Bật toggle **Active** của workflow. Ba việc chạy song song:
 
-| Lịch | Việc |
+| Trigger | Việc |
 | --- | --- |
-| Mỗi 4 giờ: thu bài | Đọc tab `Sources` → crawler lấy bài mới → thêm vào `Posts` (`NEED_TRANSLATE`) |
-| Mỗi 5 phút: dịch | Tối đa 3 bài `NEED_TRANSLATE` → Gemini → `en_text`, `REVIEW` |
-| Mỗi 2 phút: đăng | Đăng **1** bài đã tick `publish_now` hoặc đến giờ `scheduled_at`; gỡ bài kẹt `POSTING` |
+| Thu bài: kiểm tra mỗi 5 phút | Đến lịch thu (mặc định mỗi 4 giờ) → đọc `Sources` → crawler lấy bài mới → thêm vào `Posts` (`NEED_TRANSLATE`) |
+| Dịch: mỗi 5 phút | Tối đa 3 bài `NEED_TRANSLATE` → Gemini → `en_text`, `REVIEW` |
+| Đăng: mỗi 2 phút | Đăng **1** bài đã tick `publish_now` hoặc đến giờ `scheduled_at`; gỡ bài kẹt `POSTING` |
+
+**Giờ chạy thật chỉnh ở tab `Settings` của Sheet** (docs/02 mục 5): thu bài lúc mấy
+giờ, khung giờ dịch / đăng, cách bao lâu giữa 2 bài… Không cần sửa trigger trong n8n.
 
 Chạy thử ngay không chờ lịch: mở workflow → bấm **Execute workflow** → chọn trigger
-(ví dụ *Mỗi 4 giờ: thu bài*).
+(ví dụ *Thu bài: kiểm tra mỗi 5 phút*). Chạy tay luôn bỏ qua lịch trong `Settings`.
 
-## 6. Node `Config` — chỗ duy nhất để chỉnh
+## 6. Node `Config` — giá trị mặc định
+
+Chỉ cần điền 3 ô đầu (build từ `.env` thì đã điền sẵn). Các khoá có trong tab
+`Settings` của Sheet thì Sheet được ưu tiên; ngoài ra **mọi khoá dưới đây (trừ 4 khoá
+đầu) cũng có thể ghi đè** bằng cách thêm 1 dòng `key | value` vào tab `Settings`.
 
 | Khoá | Mặc định | Ý nghĩa |
 | --- | --- | --- |
-| `sheet_id`, `page_id`, `crawler_token` | từ `.env` | |
+| `sheet_id`, `page_id`, `crawler_token` | từ `.env` | Chỉ sửa ở đây, Sheet không đè được |
 | `crawler_url` | `http://fb-crawler:8000/crawl` | Giữ nguyên khi chạy bằng docker compose |
 | `default_max_posts` | `5` | Số bài/page khi cột `max_posts` trống |
 | `skip_video_posts` | `true` | Bỏ bài reel/video không có ảnh |
@@ -93,42 +100,23 @@ Chạy thử ngay không chờ lịch: mở workflow → bấm **Execute workflo
 | `min_images` / `max_images` | `1` / `10` | Đặt `min_images = 0` để cho phép bài chỉ có chữ |
 | `min_content_chars` | `50` | Bản dịch ngắn hơn thì không đăng |
 | `stuck_posting_minutes` | `15` | Bài ở `POSTING` quá lâu → `ERROR` để bạn kiểm tra |
+| `crawl_every_hours`, `crawl_times`, `translate_hours`, `publish_hours`, `publish_gap_minutes` | `4`, trống, trống, trống, `0` | Lịch — xem docs/02 mục 5 |
 
-## 7. Chỉnh lịch thu bài / dịch / đăng
+## 7. Lịch hoạt động thế nào
 
-Mỗi việc có một node lịch riêng (*Mỗi 4 giờ: thu bài*, *Mỗi 5 phút: dịch*, *Mỗi 2
-phút: đăng*). Mở node → **Trigger Interval** chọn:
+Ba trigger chỉ là **nhịp kiểm tra** (5 / 5 / 2 phút). Mỗi lần chạy, n8n đọc tab
+`Settings`, node **Cài đặt** quyết định lượt đó có làm hay không:
 
-- **Hours / Minutes** — chạy đều, ví dụ mỗi 6 giờ, mỗi 10 phút.
-- **Custom (Cron)** — chạy vào giờ cố định. Giờ tính theo `Asia/Ho_Chi_Minh` (biến
-  `GENERIC_TIMEZONE` trong `docker-compose.yml`).
+- **Thu bài**: n8n nhớ lần thu gần nhất (static data của workflow). Đủ
+  `crawl_every_hours` hoặc vừa qua một mốc `crawl_times` thì thu, rồi ghi lại mốc. Thu
+  lỗi cũng tính là đã thu — không bị gọi lại Facebook mỗi 5 phút. Import lại workflow
+  thì mốc này mất → lần kiểm tra đầu tiên sẽ thu ngay.
+- **Dịch**: ngoài `translate_hours` thì dừng.
+- **Đăng**: nhánh đăng vẫn chạy để gỡ bài kẹt `POSTING`, nhưng chỉ chọn bài mới khi
+  đang trong `publish_hours` và bài `POSTED` gần nhất đã cách ≥ `publish_gap_minutes`.
 
-| Muốn | Node | Cron |
-| --- | --- | --- |
-| Thu bài lúc 7h, 12h, 19h | thu bài | `0 7,12,19 * * *` |
-| Thu bài mỗi 3 giờ từ 6h đến 21h | thu bài | `0 6-21/3 * * *` |
-| Dịch mỗi 10 phút, chỉ 7h–23h | dịch | `*/10 7-23 * * *` |
-| Chỉ đăng trong 8h–22h | đăng | `*/2 8-21 * * *` |
-
-Lưu (Ctrl+S) — workflow đang Active thì lịch mới có hiệu lực ngay.
-
-Lưu ý:
-
-- **Đăng vào giờ cụ thể cho từng bài**: không cần sửa lịch — điền cột `scheduled_at`
-  (`2026-01-31 08:30`), bài lên trong ≤ 2 phút sau giờ đó. Giữ lịch đăng ngắn (2–5
-  phút) vì nó cũng là độ trễ khi bạn tick `publish_now`. Giới hạn giờ cho node đăng
-  (ví dụ 8h–22h) thì bài tick lúc 23h sẽ chờ tới 8h sáng.
-- **Mỗi lượt đăng chỉ 1 bài** → lịch đăng cũng là khoảng cách tối thiểu giữa 2 bài.
-  Muốn giãn ra (ví dụ ≥ 30 phút/bài khi tick nhiều bài) thì đổi thành mỗi 30 phút.
-- **Số lượng mỗi lượt** chỉnh ở node `Config`: `translate_per_run` (bài dịch/lượt),
-  `default_max_posts` hoặc cột `max_posts` ở tab `Sources` (bài/page/lượt thu).
-- Đừng crawl dày hơn 2–3 giờ/lần — Facebook dễ chặn tạm thời. Không đăng nhập thì
-  mỗi lượt chỉ thấy ~3 bài mới nhất/page, nên page đăng nhiều thì cần thu dày hơn
-  hoặc dùng cookie.
-- Sửa trong giao diện n8n sẽ **mất khi import lại** workflow. Muốn giữ lâu dài thì
-  sửa mảng `SECTIONS` trong `tools/build-workflows.mjs`, ví dụ
-  `rule: { field: 'cronExpression', expression: '0 7,12,19 * * *' }`, rồi build và
-  import lại.
+Các lượt "chưa đến giờ" vẫn hiện ở **Executions** (màu xanh, dừng ở node *Cài đặt*) —
+đó là bình thường.
 
 ## 8. Sửa workflow lâu dài
 

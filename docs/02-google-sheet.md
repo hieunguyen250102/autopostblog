@@ -14,7 +14,7 @@ Sheet là nơi **lưu bài, duyệt bản dịch và bật đăng**. Mọi việ
 5. Quay lại Sheet, **tải lại trang** → menu **🚀 Auto Post** → **① Khởi tạo / sửa lại
    cấu trúc sheet**.
 
-Bước ① tạo 3 tab `Posts`, `Sources`, `Prompt`. Tab cũ khác cấu trúc (từ phiên bản
+Bước ① tạo 4 tab `Posts`, `Sources`, `Prompt`, `Settings`. Tab cũ khác cấu trúc (từ phiên bản
 trước) **được đổi tên** thành `…_cu_<ngày>`, không bị xoá — copy dữ liệu cần giữ
 sang tab mới rồi tự xoá tab cũ. Chạy lại ① bất cứ lúc nào cũng an toàn.
 
@@ -69,7 +69,43 @@ Chạy lại menu ① sẽ cập nhật `A2` lên prompt mặc định mới **c
 prompt bạn đã sửa được giữ nguyên. Bài đã dịch rồi không tự dịch lại — muốn dịch lại
 một bài theo prompt mới: xoá ô `en_text` và đặt `status = NEED_TRANSLATE`.
 
-## 5. Menu 🚀 Auto Post
+## 5. Tab `Settings` — lịch chạy và thông số
+
+**Chỉnh lịch thu bài / dịch / đăng ở đây** — sửa ô `value` là có hiệu lực ở lượt chạy
+kế tiếp của n8n (≤ 5 phút), không cần mở n8n, không cần import lại, không cần SSH vào
+VPS. Ô `value` để trống = dùng mặc định.
+
+| `key` | Mặc định | Ý nghĩa | Ví dụ |
+| --- | --- | --- | --- |
+| `crawl_every_hours` | `4` | Thu bài mỗi N giờ. `0` = tắt thu bài | `3` |
+| `crawl_times` | trống | Giờ thu bài cố định trong ngày. Có giá trị thì bỏ qua `crawl_every_hours` | `07:00, 12:00, 19:00` |
+| `translate_hours` | trống = cả ngày | Khung giờ được dịch | `07:00-23:00` |
+| `publish_hours` | trống = cả ngày | Khung giờ được đăng, nhiều khung cách nhau dấu phẩy, qua đêm được | `08:00-11:00, 19:00-22:00` |
+| `publish_gap_minutes` | `0` | Cách tối thiểu giữa 2 bài đăng (phút) | `60` |
+| `translate_per_run` | `3` | Số bài dịch mỗi 5 phút | `5` |
+| `default_max_posts` | `5` | Số bài/page/lần thu khi cột `max_posts` ở `Sources` trống (tối đa 10) | `3` |
+| `min_images` | `1` | Số ảnh tối thiểu để được đăng. `0` = cho đăng bài chỉ có chữ | `0` |
+| `gemini_model` | trống = mặc định | Model Gemini dùng để dịch | |
+
+- **Viết giờ** kiểu nào cũng được: `7`, `7h`, `7h30`, `07:30`, `7:30 PM`. Khoảng giờ:
+  `8h-22h`, `08:00–22:00`, `8h đến 22h`.
+- **Tạm dừng** một việc: gõ `tắt` vào `crawl_times`, `translate_hours` hoặc
+  `publish_hours`. Ví dụ đi vắng mấy hôm: `publish_hours = tắt` — bài đã tick vẫn nằm
+  chờ, xoá chữ `tắt` là chúng lần lượt lên.
+- **Ngoài `publish_hours`**, bài tick `publish_now` hoặc đến `scheduled_at` sẽ **chờ**
+  tới đầu khung giờ kế tiếp rồi mới lên. `publish_gap_minutes` cũng áp dụng cho bài hẹn
+  giờ: hẹn 2 bài 8:00 và 8:10 với gap 30 thì bài thứ 2 lên lúc ~8:30.
+- **Thu bài theo giờ cố định**: mỗi mốc chạy 1 lần, trễ tối đa 5 phút. n8n tắt đúng
+  lúc đến mốc thì khi bật lại sẽ thu bù 1 lần (trong cùng ngày).
+- Đừng thu dày hơn 2–3 giờ/lần — Facebook dễ chặn tạm thời. Không đăng nhập thì mỗi
+  lần chỉ thấy ~3 bài mới nhất/page, nên page đăng nhiều thì thu dày hơn một chút hoặc
+  dùng cookie (docs/03).
+- Viết sai giá trị: n8n dùng mặc định cho ô đó và ghi cảnh báo `settings_warnings` ở
+  output node **Cài đặt** (n8n → Executions).
+- Muốn đăng **một bài** vào giờ cụ thể thì không cần đụng tab này — điền `scheduled_at`
+  của bài đó.
+
+## 6. Menu 🚀 Auto Post
 
 | Menu | Khi nào dùng |
 | --- | --- |

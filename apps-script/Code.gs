@@ -3,7 +3,7 @@
  *
  * Sheet chỉ là nơi lưu bài, duyệt bản dịch và bật đăng; mọi việc chạy trong n8n.
  * File này chỉ:
- *   1. Tạo các tab Posts / Sources / Prompt đúng cấu trúc n8n đọc/ghi.
+ *   1. Tạo các tab Posts / Sources / Prompt / Settings đúng cấu trúc n8n đọc/ghi.
  *   2. Hộp thoại dịch dự phòng qua AI trên web (khi Gemini báo lỗi).
  *   3. Hộp thoại thêm bài thủ công (khi muốn reup một bài cụ thể).
  *
@@ -15,6 +15,7 @@
 var SHEET_POSTS = 'Posts';
 var SHEET_SOURCES = 'Sources';
 var SHEET_PROMPT = 'Prompt';
+var SHEET_SETTINGS = 'Settings';
 
 // Tên cột PHẢI trùng với key mà workflow n8n đọc/ghi. Cột hay dùng để duyệt nằm bên trái.
 var POSTS_HEADERS = [
@@ -68,6 +69,22 @@ var SOURCES_NOTES = {
   max_posts: 'Số bài mới nhất lấy mỗi lần (mặc định 5, tối đa 10). Không đăng nhập thì Facebook chỉ cho xem ~3 bài.',
   note: 'Ghi chú tự do.'
 };
+
+var SETTINGS_HEADERS = ['key', 'value', 'note'];
+
+// Mỗi lượt chạy n8n đọc tab Settings — sửa ô value là có hiệu lực ngay, không cần
+// đụng vào n8n. Ô value để trống = dùng mặc định trong node Config của n8n.
+var SETTINGS_ROWS = [
+  ['crawl_every_hours', 4, 'Thu bài mỗi N giờ. 0 = tắt thu bài. Bị bỏ qua nếu crawl_times có giá trị.'],
+  ['crawl_times', '', 'Giờ thu bài cố định trong ngày, vd: 07:00, 12:00, 19:00. Để trống = dùng crawl_every_hours. "tắt" = không thu.'],
+  ['translate_hours', '', 'Khung giờ được dịch, vd: 07:00-23:00. Để trống = cả ngày. "tắt" = dừng dịch.'],
+  ['publish_hours', '', 'Khung giờ được đăng, vd: 08:00-11:00, 19:00-22:00 (qua đêm: 20:00-02:00). Để trống = cả ngày. "tắt" = tạm dừng đăng — bài đã tick vẫn chờ, mở lại là lên.'],
+  ['publish_gap_minutes', 0, 'Cách tối thiểu giữa 2 bài đăng (phút), vd 60. 0 = cứ 2 phút một bài.'],
+  ['translate_per_run', 3, 'Số bài dịch mỗi 5 phút. Gemini báo 429 / quota thì giảm xuống.'],
+  ['default_max_posts', 5, 'Số bài lấy mỗi page mỗi lần thu (khi cột max_posts ở Sources trống). Tối đa 10.'],
+  ['min_images', 1, 'Số ảnh tối thiểu để được đăng. 0 = cho đăng bài chỉ có chữ.'],
+  ['gemini_model', '', 'Model Gemini dùng để dịch. Để trống = mặc định của workflow.']
+];
 
 var STATUSES = ['NEED_CONTENT', 'NEED_TRANSLATE', 'REVIEW', 'POSTING', 'POSTED', 'ERROR', 'SKIP'];
 
@@ -138,7 +155,8 @@ function setupSheet() {
   setupPostsSheet_(ss, moved);
   setupSourcesSheet_(ss, moved);
   setupPromptSheet_(ss);
-  var msg = 'Đã khởi tạo Posts / Sources / Prompt.';
+  setupSettingsSheet_(ss, moved);
+  var msg = 'Đã khởi tạo Posts / Sources / Prompt / Settings.';
   if (moved.length) {
     msg += '\n\nTab cũ khác cấu trúc nên đã được đổi tên (KHÔNG xoá dữ liệu):\n• ' + moved.join('\n• ') +
       '\n\nCopy dữ liệu cần giữ sang tab mới rồi xoá tab cũ.';
@@ -233,6 +251,27 @@ function setupPromptSheet_(ss) {
   sh.getRange(2, 1).setWrap(true).setVerticalAlignment('top');
   sh.setColumnWidth(1, 900);
   sh.setFrozenRows(1);
+}
+
+/** Thêm khoá còn thiếu; KHÔNG ghi đè giá trị bạn đã sửa. */
+function setupSettingsSheet_(ss, moved) {
+  var sh = sheetWithHeaders_(ss, SHEET_SETTINGS, SETTINGS_HEADERS, moved);
+  var last = sh.getLastRow();
+  var existing = last > 1 ? sh.getRange(2, 1, last - 1, 1).getValues().map(function (r) { return String(r[0]).trim(); }) : [];
+  // value là text: gõ "07:00" không bị Sheets tự đổi sang kiểu giờ.
+  sh.getRange(2, 2, Math.max(sh.getMaxRows() - 1, SETTINGS_ROWS.length), 1).setNumberFormat('@');
+  SETTINGS_ROWS.forEach(function (row) {
+    var i = existing.indexOf(row[0]);
+    if (i < 0) {
+      sh.appendRow([row[0], String(row[1]), row[2]]);
+    } else {
+      sh.getRange(i + 2, 3).setValue(row[2]); // cập nhật ghi chú, giữ nguyên value
+    }
+  });
+  sh.setColumnWidth(1, 180);
+  sh.setColumnWidth(2, 220);
+  sh.setColumnWidth(3, 640);
+  sh.getRange(2, 3, Math.max(sh.getLastRow() - 1, 1), 1).setWrap(true).setFontColor('#666666');
 }
 
 /* ============================================== DỊCH BẰNG AI QUA WEB ===== */

@@ -30,9 +30,18 @@ const codeOf = (nodeName) => {
  * nodes: { 'Tên node': [ {json}, ... ] } — output của các node trước.
  * Trả về mảng item đã JSON hoá.
  */
-function runNode(nodeName, { input = [], nodes = {} } = {}) {
+function runNode(nodeName, { input = [], nodes = {}, now, mode = 'production', staticData = {} } = {}) {
   const wrap = (items) => ({ all: () => items, first: () => items[0] });
+  const RealDate = Date;
+  // now: giả lập giờ hiện tại (chuỗi ISO có múi giờ) để test lịch.
+  const FakeDate = now === undefined ? Date : class extends RealDate {
+    constructor(...a) { if (a.length) super(...a); else super(now); }
+    static now() { return new RealDate(now).getTime(); }
+  };
   const sandbox = {
+    Date: FakeDate,
+    $execution: { mode },
+    $getWorkflowStaticData: () => staticData,
     $input: wrap(input),
     $json: input.length ? input[0].json : {},
     $: (name) => {
@@ -57,6 +66,8 @@ const test = (name, fn) => tests.push([name, fn]);
 /* ------------------------------------------------------------- cấu trúc */
 
 test('một workflow, 3 lịch chạy, không còn webhook / Drive', () => {
+  assert.deepEqual(wf.connections.Config.main[0].map((l) => l.node), ['Sheets: Đọc Settings']);
+  assert.deepEqual(wf.connections['Cài đặt'].main[0].map((l) => l.node), ['Chọn việc']);
   const types = wf.nodes.map((n) => n.type);
   assert.equal(types.filter((t) => t === 'n8n-nodes-base.scheduleTrigger').length, 3);
   assert.ok(!types.includes('n8n-nodes-base.webhook'));
@@ -68,6 +79,110 @@ test('Chọn việc: mỗi lịch đi đúng một nhánh', () => {
   assert.deepEqual(route, ['Sheets: Đọc Posts (thu)', 'Sheets: Đọc Prompt', 'Sheets: Đọc Posts (đăng)']);
   const keys = wf.nodes.find((n) => n.name === 'Chọn việc').parameters.rules.values.map((v) => v.conditions.conditions[0].rightValue);
   assert.deepEqual(keys, ['collect', 'translate', 'publish']);
+});
+
+/* ------------------------------------------------- tab Settings + lịch */
+
+// Giờ Việt Nam (+07:00) cho dễ đọc.
+const VN = (hm, day = '2026-03-10') => `${day}T${hm}:00+07:00`;
+const settingsRows = (obj) => items(Object.entries(obj).map(([key, value]) => ({ key, value })));
+const gate = (section, rows = {}, opts = {}) =>
+  runNode('Cài đặt', { input: settingsRows(rows), nodes: { Config: cfg({ section }) }, ...opts });
+
+test('Settings đè Config theo đúng kiểu; khoá khoá cứng / khoá lạ bị bỏ qua', () => {
+  const [c] = gate('translate', {
+    translate_per_run: '7', min_images: 0, skip_video_posts: 'FALSE', gemini_model: ' gemini-x ',
+    page_id: 'PAGE_KHAC', sheet_id: 'SHEET_KHAC', typo_key: 1, default_max_posts: 'abc', crawl_times: '',
+  });
+  assert.equal(c.translate_per_run, 7);
+  assert.equal(c.min_images, 0);
+  assert.equal(c.skip_video_posts, false);
+  assert.equal(c.gemini_model, 'gemini-x');
+  assert.equal(c.page_id, CONFIG.page_id);
+  assert.equal(c.sheet_id, CONFIG.sheet_id);
+  assert.equal(c.default_max_posts, CONFIG.default_max_posts);
+  assert.equal(c.settings_warnings.length, 4);
+});
+
+test('thiếu tab Settings (node Sheets lỗi) => chạy bằng mặc định', () => {
+  const r = runNode('Cài đặt', { input: items([{ error: { message: 'Sheet not found' } }]), nodes: { Config: cfg({ section: 'translate' }) } });
+  assert.equal(r.length, 1);
+  assert.equal(r[0].translate_per_run, CONFIG.translate_per_run);
+});
+
+test('thu bài mỗi N giờ: lần đầu chạy, chưa đủ giờ thì thôi, 0 = tắt', () => {
+  const state = {};
+  assert.equal(gate('collect', {}, { now: VN('08:00'), staticData: state }).length, 1);
+  assert.equal(state.last_crawl_at, '2026-03-10 08:00:00');
+  assert.equal(gate('collect', {}, { now: VN('11:55'), staticData: state }).length, 0);
+  assert.equal(gate('collect', {}, { now: VN('11:59'), staticData: state }).length, 1, 'trừ 90 giây để lịch không trôi');
+  assert.equal(gate('collect', { crawl_every_hours: 2 }, { now: VN('13:00'), staticData: { ...state } }).length, 0);
+  assert.equal(gate('collect', { crawl_every_hours: 1 }, { now: VN('13:00'), staticData: { ...state } }).length, 1);
+  assert.equal(gate('collect', { crawl_every_hours: 0 }, { now: VN('23:00'), staticData: {} }).length, 0);
+});
+
+test('thu bài giờ cố định: mỗi mốc chạy 1 lần, nhiều kiểu viết giờ', () => {
+  const state = {};
+  const at = (hm, times = '7h, 12:00 , 19h30') => gate('collect', { crawl_times: times }, { now: VN(hm), staticData: state }).length;
+  assert.equal(at('06:55'), 0);
+  assert.equal(at('07:00'), 1);
+  assert.equal(at('07:05'), 0);
+  assert.equal(at('11:59'), 0);
+  assert.equal(at('12:03'), 1);
+  assert.equal(at('19:25'), 0);
+  assert.equal(at('19:30'), 1);
+  assert.equal(at('23:59'), 0);
+  assert.equal(gate('collect', { crawl_times: '7:00 PM' }, { now: VN('19:00'), staticData: {} }).length, 1);
+  assert.equal(gate('collect', { crawl_times: 0.5 }, { now: VN('12:00'), staticData: {} }).length, 1, 'ô Sheet kiểu giờ (số)');
+  assert.equal(gate('collect', { crawl_times: 'tắt' }, { now: VN('12:00'), staticData: {} }).length, 0);
+});
+
+test('chạy tay (Execute workflow) bỏ qua lịch và không ghi lại lần thu', () => {
+  const state = {};
+  assert.equal(gate('collect', { crawl_times: 'tắt' }, { now: VN('03:00'), staticData: state, mode: 'test' }).length, 1);
+  assert.deepEqual(state, {});
+  assert.equal(gate('translate', { translate_hours: 'tắt' }, { mode: 'test' }).length, 1);
+});
+
+test('translate_hours: trong khung thì dịch, ngoài khung / tắt thì dừng', () => {
+  assert.equal(gate('translate', { translate_hours: '07:00-23:00' }, { now: VN('06:59') }).length, 0);
+  assert.equal(gate('translate', { translate_hours: '07:00-23:00' }, { now: VN('07:00') }).length, 1);
+  assert.equal(gate('translate', { translate_hours: '07:00-23:00' }, { now: VN('23:00') }).length, 0);
+  assert.equal(gate('translate', { translate_hours: 'off' }, { now: VN('12:00') }).length, 0);
+  assert.equal(gate('translate', {}, { now: VN('03:00') }).length, 1);
+});
+
+test('publish_hours: nhiều khung, qua đêm; viết sai => cả ngày + cảnh báo', () => {
+  const open = (spec, hm) => gate('publish', { publish_hours: spec }, { now: VN(hm) })[0].publish_open;
+  assert.equal(open('08:00-11:00, 19:00-22:00', '10:59'), true);
+  assert.equal(open('08:00-11:00, 19:00-22:00', '15:00'), false);
+  assert.equal(open('08:00-11:00, 19:00-22:00', '21:30'), true);
+  assert.equal(open('20:00-02:00', '01:00'), true);
+  assert.equal(open('20:00-02:00', '12:00'), false);
+  assert.equal(open('8h–22h', '21:59'), true);
+  assert.equal(open('tắt', '12:00'), false);
+  const [bad] = gate('publish', { publish_hours: 'sáng sớm' }, { now: VN('03:00') });
+  assert.equal(bad.publish_open, true);
+  assert.match(bad.settings_warnings.join(), /publish_hours/);
+});
+
+test('đăng: ngoài publish_hours hoặc chưa đủ publish_gap_minutes => chưa đăng', () => {
+  const ticked = { post_id: 'AP-1', status: 'REVIEW', publish_now: true };
+  const posted = (t) => ({ post_id: 'AP-0', status: 'POSTED', posted_at: t });
+  const run = (over, rows, opts = {}) => runNode('Chọn bài đến hạn', { input: items(rows), nodes: { 'Cài đặt': cfg(over) }, now: VN('10:00'), ...opts }).length;
+  assert.equal(run({ publish_open: false }, [ticked]), 0);
+  assert.equal(run({ publish_open: false, manual: true }, [ticked]), 1);
+  assert.equal(run({ publish_gap_minutes: 60 }, [posted('2026-03-10 09:30:00'), ticked]), 0);
+  assert.equal(run({ publish_gap_minutes: 60 }, [posted('2026-03-10 08:59:00'), ticked]), 1);
+  assert.equal(run({ publish_gap_minutes: 0 }, [posted('2026-03-10 09:59:00'), ticked]), 1);
+});
+
+test('mọi khoá trong tab Settings (Apps Script) đều có trong Config của n8n', () => {
+  const gs = {};
+  vm.runInNewContext(readFileSync(join(ROOT, 'apps-script', 'Code.gs'), 'utf8'), gs);
+  const missing = gs.SETTINGS_ROWS.map((r) => r[0]).filter((k) => !(k in CONFIG));
+  assert.deepEqual(plain(missing), []);
+  gs.SETTINGS_ROWS.filter((r) => r[1] !== '').forEach(([k, v]) => assert.equal(v, CONFIG[k], `mặc định ${k} lệch`));
 });
 
 /* ------------------------------------------------------------- 1. thu bài */
@@ -85,7 +200,7 @@ test('Sources: chỉ lấy dòng active có link, max_posts tối đa 10', () =>
       { source_name: 'C', page_url: '', active: 'TRUE' },
       { page_id_or_url: 'https://www.facebook.com/d', active: 'x' },
     ]),
-    nodes: { Config: cfg() },
+    nodes: { 'Cài đặt': cfg() },
   });
   assert.deepEqual(r.map((x) => [x.source_name, x.page, x.max_posts]), [
     ['A', 'https://www.facebook.com/a', 10],
@@ -94,11 +209,11 @@ test('Sources: chỉ lấy dòng active có link, max_posts tối đa 10', () =>
 });
 
 test('Sources: không có page nào bật => báo lỗi rõ', () => {
-  assert.throws(() => runNode('Lọc nguồn đang bật', { input: items([{ active: false }]), nodes: { Config: cfg() } }), /chưa có page nào bật/);
+  assert.throws(() => runNode('Lọc nguồn đang bật', { input: items([{ active: false }]), nodes: { 'Cài đặt': cfg() } }), /chưa có page nào bật/);
 });
 
 const normCrawler = (responses, over = {}) =>
-  runNode('Chuẩn hoá bài crawler', { input: items(responses), nodes: { Config: cfg(over), 'Lọc nguồn đang bật': SOURCES } });
+  runNode('Chuẩn hoá bài crawler', { input: items(responses), nodes: { 'Cài đặt': cfg(over), 'Lọc nguồn đang bật': SOURCES } });
 const cpost = (id, extra = {}) => ({ source_post_id: id, source_post_url: `https://fb/${id}`, text: `Bài ${id}\n\nđoạn 2`, images: ['https://x/1.jpg'], ...extra });
 
 test('crawler: gán đúng tên page, giữ xuống dòng, ảnh tối đa 10', () => {
@@ -128,7 +243,7 @@ test('crawler: mọi page lỗi hoặc 0 bài => báo lỗi đỏ', () => {
 });
 
 const dedupe = (posts, known = { existing_keys: ['cu'], max_post_number: 7 }) =>
-  runNode('Bỏ trùng + tạo post_id', { input: items(posts), nodes: { Config: cfg(), 'Gom bài đã có': [{ json: known }] } });
+  runNode('Bỏ trùng + tạo post_id', { input: items(posts), nodes: { 'Cài đặt': cfg(), 'Gom bài đã có': [{ json: known }] } });
 
 test('bỏ trùng + post_id nối tiếp; có chữ => NEED_TRANSLATE, ảnh mỗi dòng 1 link', () => {
   const r = dedupe([
@@ -162,7 +277,7 @@ test('lấy prompt từ tab Prompt, thiếu tab thì dùng mặc định', () =>
 const pickT = (rows, limit = 3) =>
   runNode('Chọn bài cần dịch', {
     input: items(rows),
-    nodes: { Config: cfg({ translate_per_run: limit }), 'Lấy prompt': [{ json: { prompt: 'P: {{NOI_DUNG}} $& end' } }] },
+    nodes: { 'Cài đặt': cfg({ translate_per_run: limit }), 'Lấy prompt': [{ json: { prompt: 'P: {{NOI_DUNG}} $& end' } }] },
   });
 
 test('chỉ dịch dòng NEED_TRANSLATE có source_text và chưa có en_text', () => {
@@ -184,7 +299,7 @@ test('giới hạn số bài dịch mỗi lần', () => {
 const applyT = (responses) =>
   runNode('Gắn bản dịch', {
     input: items(responses),
-    nodes: { Config: cfg(), 'Chọn bài cần dịch': responses.map((_, i) => ({ json: { row_number: 10 + i, post_id: `AP-${i}` } })) },
+    nodes: { 'Cài đặt': cfg(), 'Chọn bài cần dịch': responses.map((_, i) => ({ json: { row_number: 10 + i, post_id: `AP-${i}` } })) },
   });
 const gem = (text, finishReason = 'STOP') => ({ candidates: [{ content: { parts: [{ text }] }, finishReason }] });
 
@@ -221,7 +336,7 @@ test('bị chặn nội dung / lỗi khác => ERROR, gợi ý dịch tay', () =>
 
 /* ---------------------------------------------------------------- 3. đăng */
 
-const due = (rows) => runNode('Chọn bài đến hạn', { input: items(rows), nodes: { Config: cfg() } });
+const due = (rows) => runNode('Chọn bài đến hạn', { input: items(rows), nodes: { 'Cài đặt': cfg() } });
 
 test('tick publish_now => được chọn, kèm dữ liệu dòng', () => {
   const [r] = due([{ row_number: 4, post_id: 'AP-1', status: 'REVIEW', publish_now: true, en_text: 'x' }]);
@@ -272,7 +387,7 @@ test('dòng trống / thiếu post_id bị bỏ qua', () => {
 const EN = 'This is the English translation of the original post, long enough to pass.';
 const URL1 = 'https://scontent.xx.fbcdn.net/v/1.jpg?oe=A';
 const URL2 = 'https://scontent.xx.fbcdn.net/v/2.jpg?oe=B';
-const check = (row, over = {}) => runNode('Kiểm tra bài', { input: items([{ row_number: 7, post_id: 'AP-7', reason: 'tick', ...row }]), nodes: { Config: cfg(over) } })[0];
+const check = (row, over = {}) => runNode('Kiểm tra bài', { input: items([{ row_number: 7, post_id: 'AP-7', reason: 'tick', ...row }]), nodes: { 'Cài đặt': cfg(over) } })[0];
 
 test('kiểm tra: đủ bản dịch + ảnh => ok, ảnh giữ thứ tự, bỏ rác', () => {
   const r = check({ en_text: `﻿${EN}\r\n\n\n\nHết.`, source_images: `${URL1}\n  ${URL2}\nrác` });
@@ -327,7 +442,7 @@ test('bài không ảnh => chỉ có message, không đọc dữ liệu ảnh c�
   assert.deepEqual(r.payload, { message: EN });
 });
 
-const stuck = (rows) => runNode('Tìm bài kẹt POSTING', { input: items(rows), nodes: { Config: cfg() } });
+const stuck = (rows) => runNode('Tìm bài kẹt POSTING', { input: items(rows), nodes: { 'Cài đặt': cfg() } });
 
 test('POSTING quá 15 phút => ERROR, không tự đăng lại', () => {
   const [r] = stuck([{ row_number: 4, status: 'POSTING', last_action_at: '2000-01-01 08:00:00' }]);

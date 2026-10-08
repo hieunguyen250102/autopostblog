@@ -100,6 +100,36 @@
               "name": "timezone",
               "value": "Asia/Ho_Chi_Minh",
               "type": "string"
+            },
+            {
+              "id": "c16",
+              "name": "crawl_every_hours",
+              "value": 4,
+              "type": "number"
+            },
+            {
+              "id": "c17",
+              "name": "crawl_times",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "c18",
+              "name": "translate_hours",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "c19",
+              "name": "publish_hours",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "c20",
+              "name": "publish_gap_minutes",
+              "value": 0,
+              "type": "number"
             }
           ]
         },
@@ -110,29 +140,68 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        740,
+        260,
         300
       ],
-      "notes": "SỬA Ở ĐÂY — chỗ duy nhất cần điền: sheet_id, page_id, crawler_token (build từ .env thì đã điền sẵn)",
+      "notes": "Điền sheet_id, page_id, crawler_token (build từ .env thì đã điền sẵn). Còn lại là mặc định — đổi lịch / số lượng ở tab Settings trong Sheet.",
       "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Settings",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "fd0f90e5-1041-899f-d0f9-0e5104189900",
+      "name": "Sheets: Đọc Settings",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        500,
+        300
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2.",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst base = $('Config').first().json;\n// Không cho Sheet đổi các khoá này: sai là workflow ghi nhầm Sheet / đăng nhầm Page.\nconst LOCKED = ['section', 'sheet_id', 'page_id', 'crawler_token', 'crawler_url'];\nconst OFF = ['off', 'tắt', 'tat', 'dừng', 'dung', 'no', 'false', 'không', 'khong'];\nconst cfg = { ...base };\nconst warnings = [];\n\n$input.all().forEach((item) => {\n  const r = item.json || {};\n  const key = String(r.key ?? '').trim();\n  const raw = r.value;\n  if (!key || raw === undefined || raw === null || String(raw).trim() === '') return;\n  if (LOCKED.includes(key) || !(key in base)) {\n    warnings.push('bỏ qua khoá lạ \"' + key + '\"');\n    return;\n  }\n  const def = base[key];\n  if (typeof def === 'number') {\n    const n = typeof raw === 'number' ? raw : Number(String(raw).trim().replace(',', '.'));\n    if (isFinite(n)) cfg[key] = n;\n    else warnings.push(key + ' phải là số');\n  } else if (typeof def === 'boolean') {\n    cfg[key] = typeof raw === 'boolean' ? raw : isTruthy(raw);\n  } else {\n    cfg[key] = typeof raw === 'number' ? raw : String(raw).trim();\n  }\n});\n\n// \"7\", \"7h\", \"7h30\", \"07:30\", \"7:30:00 PM\" => \"HH:MM\". Ô Sheet tự đổi sang giờ => số < 1.\nconst parseTime = (v) => {\n  if (typeof v === 'number' && v >= 0 && v < 1) {\n    const m = Math.round(v * 1440);\n    return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');\n  }\n  const m = String(v).trim().toLowerCase().match(/^(\\d{1,2})(?:\\s*[:h.]\\s*(\\d{1,2})?)?(?::\\d{2})?\\s*(am|pm|sa|ch)?$/);\n  if (!m) return null;\n  let h = Number(m[1]);\n  const mi = Number(m[2] || 0);\n  if ((m[3] === 'pm' || m[3] === 'ch') && h < 12) h += 12;\n  if ((m[3] === 'am' || m[3] === 'sa') && h === 12) h = 0;\n  if (h > 24 || mi > 59 || (h === 24 && mi > 0)) return null;\n  return String(h).padStart(2, '0') + ':' + String(mi).padStart(2, '0');\n};\nconst isOff = (v) => OFF.includes(String(v ?? '').trim().toLowerCase());\nconst parts = (v) => (typeof v === 'number' ? [v] : String(v ?? '').split(/[,;\\n]+/).map((x) => x.trim()).filter(Boolean));\n\n// Khung giờ \"08:00-11:00, 19:00-22:00\". null = cả ngày, [] = tắt.\nconst windowsOf = (key) => {\n  const v = cfg[key];\n  if (v === '' || v === undefined || v === null) return null;\n  if (isOff(v)) return [];\n  const out = [];\n  parts(v).forEach((p) => {\n    const [a, b] = p.split(/\\s*(?:-|–|—|đến|to)\\s*/).map(parseTime);\n    if (a && b) out.push([a, b]);\n    else warnings.push(key + ': không hiểu \"' + p + '\"');\n  });\n  return out.length ? out : null; // viết sai hết => coi như cả ngày, có cảnh báo\n};\nconst inWindows = (wins, hm) => wins === null || wins.some(([a, b]) => (a === b) || (a < b ? a <= hm && hm < b : hm >= a || hm < b));\n\nconst now = nowIso(cfg.timezone);\nconst hm = now.slice(11, 16);\nconst manual = typeof $execution !== 'undefined' && ['test', 'manual'].includes($execution.mode);\nlet run = true;\nlet why = '';\n\nif (cfg.section === 'collect') {\n  // Nhớ lần thu gần nhất trong static data của workflow (chỉ lưu khi chạy theo lịch).\n  const state = $getWorkflowStaticData('global');\n  const times = isOff(cfg.crawl_times) ? null : parts(cfg.crawl_times).map(parseTime).filter(Boolean).sort();\n  if (times === null) {\n    run = false;\n    why = 'crawl_times = tắt';\n  } else if (times.length) {\n    const passed = times.filter((t) => t <= hm);\n    const slot = passed.length ? now.slice(0, 10) + ' ' + passed[passed.length - 1] + ':00' : '';\n    run = slot !== '' && !(String(state.last_crawl_at || '') >= slot);\n    why = run ? 'đến giờ ' + slot.slice(11, 16) : 'chưa đến giờ thu (' + times.join(', ') + ')';\n  } else {\n    const hours = Number(cfg.crawl_every_hours);\n    // Trừ 90 giây để nhịp 5 phút không làm lịch trôi dần.\n    run = hours > 0 && (!state.last_crawl_ms || Date.now() - state.last_crawl_ms >= hours * 3600000 - 90000);\n    why = hours > 0 ? (run ? 'đủ ' + hours + ' giờ' : 'chưa đủ ' + hours + ' giờ') : 'crawl_every_hours = 0 (tắt)';\n  }\n  if (run && !manual) {\n    // Ghi ngay khi bắt đầu: crawl lỗi cũng không bị thử lại mỗi 5 phút.\n    state.last_crawl_ms = Date.now();\n    state.last_crawl_at = now;\n  }\n} else if (cfg.section === 'translate') {\n  run = inWindows(windowsOf('translate_hours'), hm);\n  why = run ? '' : 'ngoài translate_hours';\n} else if (cfg.section === 'publish') {\n  // Nhánh đăng vẫn chạy để gỡ bài kẹt POSTING; 'Chọn bài đến hạn' xem publish_open.\n  cfg.publish_open = inWindows(windowsOf('publish_hours'), hm);\n}\n\nif (!run && !manual) return [];\nreturn [{ json: { ...cfg, manual, schedule_note: why, settings_warnings: warnings } }];\n"
+      },
+      "id": "25881c44-1030-e4e2-5881-c441030e4e00",
+      "name": "Cài đặt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        740,
+        300
+      ]
     },
     {
       "parameters": {
         "rule": {
           "interval": [
             {
-              "field": "hours",
-              "hoursInterval": 4
+              "field": "minutes",
+              "minutesInterval": 5
             }
           ]
         }
       },
-      "id": "ca72ab4b-105e-de1c-a72a-b4b105ede100",
-      "name": "Mỗi 4 giờ: thu bài",
+      "id": "4a4c0fac-1090-81d4-a4c0-fac109081d00",
+      "name": "Thu bài: kiểm tra mỗi 5 phút",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        260,
+        -220,
         -270
       ]
     },
@@ -155,7 +224,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        500,
+        20,
         -270
       ]
     },
@@ -170,12 +239,12 @@
           ]
         }
       },
-      "id": "6e65a028-1066-e9f6-e65a-0281066e9f00",
-      "name": "Mỗi 5 phút: dịch",
+      "id": "41537824-105b-b3b4-1537-824105bb3b00",
+      "name": "Dịch: mỗi 5 phút",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        260,
+        -220,
         300
       ]
     },
@@ -198,7 +267,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        500,
+        20,
         300
       ]
     },
@@ -213,12 +282,12 @@
           ]
         }
       },
-      "id": "da7bfc5c-1030-5bed-a7bf-c5c10305be00",
-      "name": "Mỗi 2 phút: đăng",
+      "id": "3679ab0c-103b-1233-679a-b0c103b12300",
+      "name": "Đăng: mỗi 2 phút",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        260,
+        -220,
         870
       ]
     },
@@ -241,7 +310,7 @@
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
       "position": [
-        500,
+        20,
         870
       ]
     },
@@ -399,7 +468,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst out = [];\nfor (const item of $input.all()) {\n  const r = item.json || {};\n  if (!isTruthy(r.active)) continue;\n  const ref = String(r.page_url ?? r.page_id_or_url ?? '').trim();\n  if (!ref) continue;\n  const max = Number(r.max_posts) > 0 ? Number(r.max_posts) : Number(cfg.default_max_posts) || 5;\n  out.push({ json: {\n    source_name: String(r.source_name ?? '').trim() || ref,\n    page: ref,\n    max_posts: Math.min(max, 10),\n  } });\n}\nif (!out.length) throw new Error('Tab \"Sources\" chưa có page nào bật active');\nreturn out;\n"
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Cài đặt').first().json;\nconst out = [];\nfor (const item of $input.all()) {\n  const r = item.json || {};\n  if (!isTruthy(r.active)) continue;\n  const ref = String(r.page_url ?? r.page_id_or_url ?? '').trim();\n  if (!ref) continue;\n  const max = Number(r.max_posts) > 0 ? Number(r.max_posts) : Number(cfg.default_max_posts) || 5;\n  out.push({ json: {\n    source_name: String(r.source_name ?? '').trim() || ref,\n    page: ref,\n    max_posts: Math.min(max, 10),\n  } });\n}\nif (!out.length) throw new Error('Tab \"Sources\" chưa có page nào bật active');\nreturn out;\n"
       },
       "id": "fcb8d768-109c-681f-cb8d-768109c68100",
       "name": "Lọc nguồn đang bật",
@@ -413,13 +482,13 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $('Config').first().json.crawler_url }}",
+        "url": "={{ $('Cài đặt').first().json.crawler_url }}",
         "sendHeaders": true,
         "headerParameters": {
           "parameters": [
             {
               "name": "X-Crawler-Token",
-              "value": "={{ $('Config').first().json.crawler_token }}"
+              "value": "={{ $('Cài đặt').first().json.crawler_token }}"
             }
           ]
         },
@@ -449,7 +518,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst sources = $('Lọc nguồn đang bật').all().map((i) => i.json);\nconst skipVideo = String(cfg.skip_video_posts).toLowerCase() !== 'false';\nconst out = [];\nconst failures = [];\n$input.all().forEach((item, index) => {\n  const src = sources[index] || { source_name: '?' };\n  const body = item.json || {};\n  if (body.error || body.ok === false) {\n    failures.push(src.source_name + ': ' + errMsg(body.error || body));\n    return;\n  }\n  // Crawler luôn trả các bài mới nhất (kể cả bài đã thu) => 0 bài là có vấn đề thật.\n  if (!Array.isArray(body.posts) || !body.posts.length) {\n    failures.push(src.source_name + ': không lấy được bài nào (link page sai, page bị ẩn/giới hạn tuổi, hoặc Facebook chặn tạm thời)');\n    return;\n  }\n  for (const p of body.posts) {\n    const images = Array.isArray(p.images) ? p.images.slice(0, 10) : [];\n    // Reel/video không reup bằng ảnh được.\n    if (skipVideo && p.has_video && !images.length) continue;\n    const text = String(p.text || '').replace(/\\r\\n/g, '\\n').trim();\n    out.push({ json: {\n      source_page: src.source_name,\n      source_post_url: p.source_post_url || '',\n      source_post_id: String(p.source_post_id || ''),\n      title: (p.is_shared ? '[Chia sẻ] ' : '') + text.replace(/\\s+/g, ' ').slice(0, 120),\n      source_text: text.slice(0, 45000),\n      source_images: images,\n    } });\n  }\n});\n// Một page lỗi không chặn page khác; tất cả đều lỗi thì báo đỏ trong n8n Executions.\nif (failures.length === sources.length) {\n  throw new Error('Crawler lỗi với tất cả page — ' + failures.join(' | '));\n}\nreturn out;\n"
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Cài đặt').first().json;\nconst sources = $('Lọc nguồn đang bật').all().map((i) => i.json);\nconst skipVideo = String(cfg.skip_video_posts).toLowerCase() !== 'false';\nconst out = [];\nconst failures = [];\n$input.all().forEach((item, index) => {\n  const src = sources[index] || { source_name: '?' };\n  const body = item.json || {};\n  if (body.error || body.ok === false) {\n    failures.push(src.source_name + ': ' + errMsg(body.error || body));\n    return;\n  }\n  // Crawler luôn trả các bài mới nhất (kể cả bài đã thu) => 0 bài là có vấn đề thật.\n  if (!Array.isArray(body.posts) || !body.posts.length) {\n    failures.push(src.source_name + ': không lấy được bài nào (link page sai, page bị ẩn/giới hạn tuổi, hoặc Facebook chặn tạm thời)');\n    return;\n  }\n  for (const p of body.posts) {\n    const images = Array.isArray(p.images) ? p.images.slice(0, 10) : [];\n    // Reel/video không reup bằng ảnh được.\n    if (skipVideo && p.has_video && !images.length) continue;\n    const text = String(p.text || '').replace(/\\r\\n/g, '\\n').trim();\n    out.push({ json: {\n      source_page: src.source_name,\n      source_post_url: p.source_post_url || '',\n      source_post_id: String(p.source_post_id || ''),\n      title: (p.is_shared ? '[Chia sẻ] ' : '') + text.replace(/\\s+/g, ' ').slice(0, 120),\n      source_text: text.slice(0, 45000),\n      source_images: images,\n    } });\n  }\n});\n// Một page lỗi không chặn page khác; tất cả đều lỗi thì báo đỏ trong n8n Executions.\nif (failures.length === sources.length) {\n  throw new Error('Crawler lỗi với tất cả page — ' + failures.join(' | '));\n}\nreturn out;\n"
       },
       "id": "24afd954-1037-4232-4afd-954103742300",
       "name": "Chuẩn hoá bài crawler",
@@ -462,7 +531,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst known = $('Gom bài đã có').first().json;\nconst seen = new Set(known.existing_keys || []);\nconst prefix = String(cfg.post_id_prefix || 'AP');\nlet maxNum = Number(known.max_post_number || 0);\nconst stamp = nowIso(cfg.timezone);\nconst rows = [];\nfor (const item of $input.all()) {\n  const p = item.json || {};\n  const key = String(p.source_post_id || p.source_post_url || '').trim();\n  if (!key || seen.has(key)) continue;\n  seen.add(key);\n  maxNum += 1;\n  const hasText = String(p.source_text || '').trim().length > 0;\n  const images = Array.isArray(p.source_images) ? p.source_images : [];\n  rows.push({ json: {\n    post_id: prefix + '-' + String(maxNum).padStart(4, '0'),\n    status: hasText ? 'NEED_TRANSLATE' : 'NEED_CONTENT',\n    publish_now: false,\n    scheduled_at: '',\n    title: p.title || '',\n    en_text: '',\n    source_images: images.join('\\n'),\n    check_note: hasText\n      ? '⏳ Chờ Gemini dịch (tối đa 5 phút)'\n      : 'Bài gốc không có chữ — tự viết nội dung tiếng Anh vào en_text',\n    source_text: p.source_text || '',\n    source_page: p.source_page || '',\n    source_post_url: p.source_post_url || '',\n    source_post_id: p.source_post_id || '',\n    collected_at: stamp,\n    posted_at: '',\n    fb_post_id: '',\n    fb_permalink: '',\n    images_count: images.length,\n    last_action_at: stamp,\n  } });\n}\nreturn rows;\n"
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Cài đặt').first().json;\nconst known = $('Gom bài đã có').first().json;\nconst seen = new Set(known.existing_keys || []);\nconst prefix = String(cfg.post_id_prefix || 'AP');\nlet maxNum = Number(known.max_post_number || 0);\nconst stamp = nowIso(cfg.timezone);\nconst rows = [];\nfor (const item of $input.all()) {\n  const p = item.json || {};\n  const key = String(p.source_post_id || p.source_post_url || '').trim();\n  if (!key || seen.has(key)) continue;\n  seen.add(key);\n  maxNum += 1;\n  const hasText = String(p.source_text || '').trim().length > 0;\n  const images = Array.isArray(p.source_images) ? p.source_images : [];\n  rows.push({ json: {\n    post_id: prefix + '-' + String(maxNum).padStart(4, '0'),\n    status: hasText ? 'NEED_TRANSLATE' : 'NEED_CONTENT',\n    publish_now: false,\n    scheduled_at: '',\n    title: p.title || '',\n    en_text: '',\n    source_images: images.join('\\n'),\n    check_note: hasText\n      ? '⏳ Chờ Gemini dịch (tối đa 5 phút)'\n      : 'Bài gốc không có chữ — tự viết nội dung tiếng Anh vào en_text',\n    source_text: p.source_text || '',\n    source_page: p.source_page || '',\n    source_post_url: p.source_post_url || '',\n    source_post_id: p.source_post_id || '',\n    collected_at: stamp,\n    posted_at: '',\n    fb_post_id: '',\n    fb_permalink: '',\n    images_count: images.length,\n    last_action_at: stamp,\n  } });\n}\nreturn rows;\n"
       },
       "id": "e78ace15-1069-f6ee-78ac-e151069f6e00",
       "name": "Bỏ trùng + tạo post_id",
@@ -572,7 +641,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst template = $('Lấy prompt').first().json.prompt;\nconst limit = Number(cfg.translate_per_run ?? 3);\nconst out = [];\n$input.all().forEach((item, index) => {\n  const r = item.json || {};\n  if (String(r.status ?? '').trim().toUpperCase() !== 'NEED_TRANSLATE') return;\n  const source = String(r.source_text ?? '').trim();\n  if (!source || String(r.en_text ?? '').trim()) return;\n  // split/join thay vì replace: bài gốc có \"$&\", \"$1\"... không bị hiểu là mẫu thay thế.\n  const prompt = template.includes('{{NOI_DUNG}}')\n    ? template.split('{{NOI_DUNG}}').join(source)\n    : template + '\\n\\n' + source;\n  out.push({ json: {\n    row_number: rowNumberOf(r, index),\n    post_id: String(r.post_id ?? '').trim(),\n    request_body: { contents: [{ role: 'user', parts: [{ text: prompt }] }] },\n  } });\n});\nreturn out.slice(0, limit);\n"
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Cài đặt').first().json;\nconst template = $('Lấy prompt').first().json.prompt;\nconst limit = Number(cfg.translate_per_run ?? 3);\nconst out = [];\n$input.all().forEach((item, index) => {\n  const r = item.json || {};\n  if (String(r.status ?? '').trim().toUpperCase() !== 'NEED_TRANSLATE') return;\n  const source = String(r.source_text ?? '').trim();\n  if (!source || String(r.en_text ?? '').trim()) return;\n  // split/join thay vì replace: bài gốc có \"$&\", \"$1\"... không bị hiểu là mẫu thay thế.\n  const prompt = template.includes('{{NOI_DUNG}}')\n    ? template.split('{{NOI_DUNG}}').join(source)\n    : template + '\\n\\n' + source;\n  out.push({ json: {\n    row_number: rowNumberOf(r, index),\n    post_id: String(r.post_id ?? '').trim(),\n    request_body: { contents: [{ role: 'user', parts: [{ text: prompt }] }] },\n  } });\n});\nreturn out.slice(0, limit);\n"
       },
       "id": "f511cbfc-109e-a63f-511c-bfc109ea6300",
       "name": "Chọn bài cần dịch",
@@ -586,7 +655,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $('Config').first().json.gemini_model }}:generateContent",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $('Cài đặt').first().json.gemini_model }}:generateContent",
         "authentication": "genericCredentialType",
         "genericAuthType": "httpHeaderAuth",
         "sendBody": true,
@@ -615,7 +684,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst asked = $('Chọn bài cần dịch').all();\nconst stamp = nowIso(cfg.timezone);\n\nconst clean = (t) => {\n  let s = String(t || '').replace(/\\r\\n/g, '\\n').trim();\n  s = s.replace(/^\\`\\`\\`[a-zA-Z]*\\n([\\s\\S]*?)\\n\\`\\`\\`$/, '$1').trim();\n  s = s.replace(/^\"\"\"\\n?([\\s\\S]*?)\\n?\"\"\"$/, '$1').trim();\n  if (/^\"[\\s\\S]*\"$/.test(s) && s.indexOf('\"', 1) === s.length - 1) s = s.slice(1, -1).trim();\n  return s.replace(/\\n{3,}/g, '\\n\\n');\n};\n\nreturn $input.all().map((item, i) => {\n  const req = (asked[i] || asked[0]).json;\n  const res = item.json || {};\n  const base = { row_number: req.row_number, post_id: req.post_id, last_action_at: stamp };\n\n  if (res.error) {\n    const msg = errMsg(res.error);\n    // Hết quota / quá tải / mạng / sai API key: để nguyên NEED_TRANSLATE, lần sau tự thử lại.\n    if (/429|RESOURCE_EXHAUSTED|quota|50[0-9]|UNAVAILABLE|timeout|ETIMEDOUT|ECONNRESET|API.?key|PERMISSION_DENIED|401|403/i.test(msg)) {\n      return { json: { ...base, check_note: '⏳ Gemini tạm lỗi, sẽ tự thử lại: ' + msg } };\n    }\n    return { json: { ...base, status: 'ERROR', check_note: '❌ Gemini không dịch được: ' + msg + ' — dịch tay bằng menu 🌐 Dịch bằng AI (web).' } };\n  }\n\n  const cand = (res.candidates || [])[0] || {};\n  const parts = (cand.content && cand.content.parts) || [];\n  const text = clean(parts.filter((p) => !p.thought).map((p) => p.text || '').join(''));\n  const blocked = (res.promptFeedback && res.promptFeedback.blockReason)\n    || (/SAFETY|RECITATION|PROHIBITED|BLOCKLIST/.test(cand.finishReason || '') ? cand.finishReason : '');\n  if (!text || blocked) {\n    return { json: { ...base, status: 'ERROR', check_note: '❌ Gemini không trả bản dịch' + (blocked ? ' (bị chặn: ' + blocked + ')' : '') + ' — dịch tay bằng menu 🌐 Dịch bằng AI (web).' } };\n  }\n  const warn = cand.finishReason === 'MAX_TOKENS' ? ' ⚠️ Có thể bị cắt cụt (MAX_TOKENS) — đọc kỹ đoạn cuối.' : '';\n  return { json: {\n    ...base,\n    en_text: text.slice(0, 45000),\n    status: 'REVIEW',\n    check_note: '🤖 Gemini đã dịch ' + text.length + ' ký tự — đọc lại en_text rồi tick publish_now.' + warn,\n  } };\n});\n"
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Cài đặt').first().json;\nconst asked = $('Chọn bài cần dịch').all();\nconst stamp = nowIso(cfg.timezone);\n\nconst clean = (t) => {\n  let s = String(t || '').replace(/\\r\\n/g, '\\n').trim();\n  s = s.replace(/^\\`\\`\\`[a-zA-Z]*\\n([\\s\\S]*?)\\n\\`\\`\\`$/, '$1').trim();\n  s = s.replace(/^\"\"\"\\n?([\\s\\S]*?)\\n?\"\"\"$/, '$1').trim();\n  if (/^\"[\\s\\S]*\"$/.test(s) && s.indexOf('\"', 1) === s.length - 1) s = s.slice(1, -1).trim();\n  return s.replace(/\\n{3,}/g, '\\n\\n');\n};\n\nreturn $input.all().map((item, i) => {\n  const req = (asked[i] || asked[0]).json;\n  const res = item.json || {};\n  const base = { row_number: req.row_number, post_id: req.post_id, last_action_at: stamp };\n\n  if (res.error) {\n    const msg = errMsg(res.error);\n    // Hết quota / quá tải / mạng / sai API key: để nguyên NEED_TRANSLATE, lần sau tự thử lại.\n    if (/429|RESOURCE_EXHAUSTED|quota|50[0-9]|UNAVAILABLE|timeout|ETIMEDOUT|ECONNRESET|API.?key|PERMISSION_DENIED|401|403/i.test(msg)) {\n      return { json: { ...base, check_note: '⏳ Gemini tạm lỗi, sẽ tự thử lại: ' + msg } };\n    }\n    return { json: { ...base, status: 'ERROR', check_note: '❌ Gemini không dịch được: ' + msg + ' — dịch tay bằng menu 🌐 Dịch bằng AI (web).' } };\n  }\n\n  const cand = (res.candidates || [])[0] || {};\n  const parts = (cand.content && cand.content.parts) || [];\n  const text = clean(parts.filter((p) => !p.thought).map((p) => p.text || '').join(''));\n  const blocked = (res.promptFeedback && res.promptFeedback.blockReason)\n    || (/SAFETY|RECITATION|PROHIBITED|BLOCKLIST/.test(cand.finishReason || '') ? cand.finishReason : '');\n  if (!text || blocked) {\n    return { json: { ...base, status: 'ERROR', check_note: '❌ Gemini không trả bản dịch' + (blocked ? ' (bị chặn: ' + blocked + ')' : '') + ' — dịch tay bằng menu 🌐 Dịch bằng AI (web).' } };\n  }\n  const warn = cand.finishReason === 'MAX_TOKENS' ? ' ⚠️ Có thể bị cắt cụt (MAX_TOKENS) — đọc kỹ đoạn cuối.' : '';\n  return { json: {\n    ...base,\n    en_text: text.slice(0, 45000),\n    status: 'REVIEW',\n    check_note: '🤖 Gemini đã dịch ' + text.length + ' ký tự — đọc lại en_text rồi tick publish_now.' + warn,\n  } };\n});\n"
       },
       "id": "9c2c9f58-1085-a159-c2c9-f581085a1500",
       "name": "Gắn bản dịch",
@@ -688,7 +757,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst minutes = Number(cfg.stuck_posting_minutes ?? 15);\nconst cutoff = nowIso(cfg.timezone, new Date(Date.now() - minutes * 60000));\nconst stamp = nowIso(cfg.timezone);\nconst out = [];\n$input.all().forEach((item, index) => {\n  const r = item.json || {};\n  if (String(r.status ?? '').trim().toUpperCase() !== 'POSTING') return;\n  const last = toSortable(r.last_action_at);\n  if (!last || last > cutoff) return; // không đọc được giờ => để yên, an toàn hơn\n  out.push({ json: {\n    row_number: rowNumberOf(r, index),\n    status: 'ERROR',\n    check_note: '⚠️ Kẹt ở POSTING quá ' + minutes + ' phút (lần cuối ' + last + '). Bài CÓ THỂ đã lên Page — kiểm tra Page trước khi đăng lại.',\n    publish_now: false,\n    last_action_at: stamp,\n  } });\n});\nreturn out;\n"
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Cài đặt').first().json;\nconst minutes = Number(cfg.stuck_posting_minutes ?? 15);\nconst cutoff = nowIso(cfg.timezone, new Date(Date.now() - minutes * 60000));\nconst stamp = nowIso(cfg.timezone);\nconst out = [];\n$input.all().forEach((item, index) => {\n  const r = item.json || {};\n  if (String(r.status ?? '').trim().toUpperCase() !== 'POSTING') return;\n  const last = toSortable(r.last_action_at);\n  if (!last || last > cutoff) return; // không đọc được giờ => để yên, an toàn hơn\n  out.push({ json: {\n    row_number: rowNumberOf(r, index),\n    status: 'ERROR',\n    check_note: '⚠️ Kẹt ở POSTING quá ' + minutes + ' phút (lần cuối ' + last + '). Bài CÓ THỂ đã lên Page — kiểm tra Page trước khi đăng lại.',\n    publish_now: false,\n    last_action_at: stamp,\n  } });\n});\nreturn out;\n"
       },
       "id": "ee2615c1-03f1-13ee-2615-c103f1130000",
       "name": "Tìm bài kẹt POSTING",
@@ -736,7 +805,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst now = nowIso(cfg.timezone);\nconst candidates = [];\n$input.all().forEach((item, index) => {\n  const r = item.json || {};\n  const postId = String(r.post_id ?? '').trim();\n  if (!postId) return;\n  const status = String(r.status ?? '').trim().toUpperCase();\n  if (['POSTED', 'POSTING', 'SKIP'].includes(status)) return;\n  const manual = isTruthy(r.publish_now);\n  // Bài hẹn giờ đã ERROR thì chỉ đăng lại khi bạn tick tay (tránh thử lại vô hạn).\n  const scheduled = toSortable(r.scheduled_at);\n  const scheduledDue = status !== 'ERROR' && scheduled !== '' && scheduled <= now;\n  if (!manual && !scheduledDue) return;\n  candidates.push({ ...r, row_number: rowNumberOf(r, index), reason: manual ? 'tick publish_now' : 'đến giờ ' + scheduled, sort: manual ? '0' : scheduled });\n});\ncandidates.sort((a, b) => (a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0));\nreturn candidates.slice(0, 1).map(({ sort, ...r }) => ({ json: r }));\n"
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Cài đặt').first().json;\nconst now = nowIso(cfg.timezone);\nif (!cfg.manual) {\n  // Ngoài publish_hours: bài tick / hẹn giờ cứ nằm chờ, mở khung giờ thì lên.\n  if (cfg.publish_open === false) return [];\n  const gap = Number(cfg.publish_gap_minutes || 0);\n  if (gap > 0) {\n    const cutoff = nowIso(cfg.timezone, new Date(Date.now() - gap * 60000));\n    const recent = $input.all().some((item) => {\n      const t = toSortable((item.json || {}).posted_at);\n      return t !== '' && t > cutoff;\n    });\n    if (recent) return [];\n  }\n}\nconst candidates = [];\n$input.all().forEach((item, index) => {\n  const r = item.json || {};\n  const postId = String(r.post_id ?? '').trim();\n  if (!postId) return;\n  const status = String(r.status ?? '').trim().toUpperCase();\n  if (['POSTED', 'POSTING', 'SKIP'].includes(status)) return;\n  const manual = isTruthy(r.publish_now);\n  // Bài hẹn giờ đã ERROR thì chỉ đăng lại khi bạn tick tay (tránh thử lại vô hạn).\n  const scheduled = toSortable(r.scheduled_at);\n  const scheduledDue = status !== 'ERROR' && scheduled !== '' && scheduled <= now;\n  if (!manual && !scheduledDue) return;\n  candidates.push({ ...r, row_number: rowNumberOf(r, index), reason: manual ? 'tick publish_now' : 'đến giờ ' + scheduled, sort: manual ? '0' : scheduled });\n});\ncandidates.sort((a, b) => (a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0));\nreturn candidates.slice(0, 1).map(({ sort, ...r }) => ({ json: r }));\n"
       },
       "id": "240ebc28-109e-df12-40eb-c28109edf100",
       "name": "Chọn bài đến hạn",
@@ -749,7 +818,7 @@
     },
     {
       "parameters": {
-        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst r = $json;\nconst minImages = Number(cfg.min_images ?? 1);\nconst maxImages = Math.min(Number(cfg.max_images ?? 10), 10);\nconst minChars = Number(cfg.min_content_chars ?? 50);\n\nconst message = String(r.en_text ?? '')\n  .replace(/^\\uFEFF/, '')\n  .replace(/\\r\\n/g, '\\n')\n  .replace(/\\n{3,}/g, '\\n\\n')\n  .trim();\nconst urls = String(r.source_images ?? '')\n  .split(/\\s+/)\n  .map((s) => s.trim())\n  .filter((s) => /^https?:\\/\\//i.test(s));\n\nconst errors = [];\nif (!message) {\n  errors.push(String(r.source_text ?? '').trim()\n    ? 'Chưa có bản dịch ở en_text (chờ Gemini, hoặc menu 🌐 Dịch bằng AI).'\n    : 'Chưa có nội dung ở en_text.');\n} else if (message.length < minChars) {\n  errors.push('Nội dung quá ngắn (' + message.length + ' ký tự, cần ≥ ' + minChars + ').');\n} else if (message.length > 60000) {\n  errors.push('Nội dung quá dài (' + message.length + ' ký tự, Facebook giới hạn ~63.206).');\n}\nif (urls.length < minImages) errors.push('Thiếu ảnh: cần tối thiểu ' + minImages + ' link ở source_images, hiện có ' + urls.length + '.');\nif (urls.length > maxImages) errors.push('Quá nhiều ảnh: Facebook cho tối đa ' + maxImages + ' ảnh/bài, hiện có ' + urls.length + '.');\n\nreturn [{ json: {\n  ok: errors.length === 0,\n  errors,\n  post_id: String(r.post_id ?? '').trim(),\n  row_number: r.row_number,\n  reason: r.reason,\n  message,\n  content_chars: message.length,\n  images: urls.map((url, i) => ({ url, order: i + 1 })),\n  images_count: urls.length,\n  timezone: cfg.timezone,\n} }];\n"
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Cài đặt').first().json;\nconst r = $json;\nconst minImages = Number(cfg.min_images ?? 1);\nconst maxImages = Math.min(Number(cfg.max_images ?? 10), 10);\nconst minChars = Number(cfg.min_content_chars ?? 50);\n\nconst message = String(r.en_text ?? '')\n  .replace(/^\\uFEFF/, '')\n  .replace(/\\r\\n/g, '\\n')\n  .replace(/\\n{3,}/g, '\\n\\n')\n  .trim();\nconst urls = String(r.source_images ?? '')\n  .split(/\\s+/)\n  .map((s) => s.trim())\n  .filter((s) => /^https?:\\/\\//i.test(s));\n\nconst errors = [];\nif (!message) {\n  errors.push(String(r.source_text ?? '').trim()\n    ? 'Chưa có bản dịch ở en_text (chờ Gemini, hoặc menu 🌐 Dịch bằng AI).'\n    : 'Chưa có nội dung ở en_text.');\n} else if (message.length < minChars) {\n  errors.push('Nội dung quá ngắn (' + message.length + ' ký tự, cần ≥ ' + minChars + ').');\n} else if (message.length > 60000) {\n  errors.push('Nội dung quá dài (' + message.length + ' ký tự, Facebook giới hạn ~63.206).');\n}\nif (urls.length < minImages) errors.push('Thiếu ảnh: cần tối thiểu ' + minImages + ' link ở source_images, hiện có ' + urls.length + '.');\nif (urls.length > maxImages) errors.push('Quá nhiều ảnh: Facebook cho tối đa ' + maxImages + ' ảnh/bài, hiện có ' + urls.length + '.');\n\nreturn [{ json: {\n  ok: errors.length === 0,\n  errors,\n  post_id: String(r.post_id ?? '').trim(),\n  row_number: r.row_number,\n  reason: r.reason,\n  message,\n  content_chars: message.length,\n  images: urls.map((url, i) => ({ url, order: i + 1 })),\n  images_count: urls.length,\n  timezone: cfg.timezone,\n} }];\n"
       },
       "id": "6636c1d8-102d-8bd6-636c-1d8102d8bd00",
       "name": "Kiểm tra bài",
@@ -964,7 +1033,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://graph.facebook.com/{{ $('Config').first().json.graph_version }}/{{ $('Config').first().json.page_id }}/photos",
+        "url": "=https://graph.facebook.com/{{ $('Cài đặt').first().json.graph_version }}/{{ $('Cài đặt').first().json.page_id }}/photos",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "facebookGraphApi",
         "sendBody": true,
@@ -1046,7 +1115,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "=https://graph.facebook.com/{{ $('Config').first().json.graph_version }}/{{ $('Config').first().json.page_id }}/feed",
+        "url": "=https://graph.facebook.com/{{ $('Cài đặt').first().json.graph_version }}/{{ $('Cài đặt').first().json.page_id }}/feed",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "facebookGraphApi",
         "sendBody": true,
@@ -1067,7 +1136,7 @@
     },
     {
       "parameters": {
-        "url": "=https://graph.facebook.com/{{ $('Config').first().json.graph_version }}/{{ $json.id }}",
+        "url": "=https://graph.facebook.com/{{ $('Cài đặt').first().json.graph_version }}/{{ $json.id }}",
         "authentication": "predefinedCredentialType",
         "nodeCredentialType": "facebookGraphApi",
         "sendQuery": true,
@@ -1190,7 +1259,7 @@
     }
   ],
   "connections": {
-    "Mỗi 4 giờ: thu bài": {
+    "Thu bài: kiểm tra mỗi 5 phút": {
       "main": [
         [
           {
@@ -1212,7 +1281,7 @@
         ]
       ]
     },
-    "Mỗi 5 phút: dịch": {
+    "Dịch: mỗi 5 phút": {
       "main": [
         [
           {
@@ -1234,7 +1303,7 @@
         ]
       ]
     },
-    "Mỗi 2 phút: đăng": {
+    "Đăng: mỗi 2 phút": {
       "main": [
         [
           {
@@ -1257,6 +1326,28 @@
       ]
     },
     "Config": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Đọc Settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets: Đọc Settings": {
+      "main": [
+        [
+          {
+            "node": "Cài đặt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cài đặt": {
       "main": [
         [
           {

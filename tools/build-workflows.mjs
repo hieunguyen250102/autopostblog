@@ -4,10 +4,11 @@
  *
  *   node tools/build-workflows.mjs
  *
- * Một workflow, ba việc chạy theo lịch, dùng chung một node Config:
- *   - Mỗi 4 giờ:  thu bài mới từ các page nguồn (service fb-crawler) → Sheet, NEED_TRANSLATE
- *   - Mỗi 5 phút: dịch bài NEED_TRANSLATE bằng Gemini API → en_text, REVIEW
- *   - Mỗi 2 phút: đăng 1 bài đã tick publish_now / đến giờ scheduled_at; gỡ bài kẹt POSTING
+ * Một workflow, ba việc chạy theo lịch, dùng chung node Config + tab Settings của Sheet:
+ *   - Thu bài:  mỗi 4 giờ hoặc giờ cố định (Settings) — fb-crawler → Sheet, NEED_TRANSLATE
+ *   - Dịch:     mỗi 5 phút, trong translate_hours — Gemini API → en_text, REVIEW
+ *   - Đăng:     mỗi 2 phút, trong publish_hours — 1 bài đã tick publish_now / đến giờ
+ *               scheduled_at, cách bài trước ≥ publish_gap_minutes; gỡ bài kẹt POSTING
  *
  * Các node Code chứa nhiều JavaScript, viết JSON bằng tay rất dễ sai escape. File
  * này là "nguồn sự thật": sửa ở đây rồi build lại.
@@ -163,7 +164,8 @@ function http(wf, name, parameters, opts = {}) {
 }
 
 const fbAuth = () => ({ authentication: 'predefinedCredentialType', nodeCredentialType: 'facebookGraphApi' });
-const cfgExpr = (key) => `$('Config').first().json.${key}`;
+// Các node sau 'Cài đặt' đọc cấu hình đã gộp (Config + tab Settings).
+const cfgExpr = (key) => `$('Cài đặt').first().json.${key}`;
 
 /** Đoạn JS dùng lại trong nhiều node Code. */
 const SHARED_JS = `
@@ -226,12 +228,13 @@ const DEFAULT_PROMPT = [
 function buildAutopost(v) {
   const wf = workflow('AutoPost');
 
-  /* ---- 3 lịch chạy → gắn tên việc → Config chung → rẽ nhánh theo việc ---- */
+  /* ---- 3 lịch chạy → gắn tên việc → Config → tab Settings → rẽ nhánh theo việc ---- */
 
+  // Trigger chỉ là nhịp kiểm tra; giờ chạy thật do tab Settings quyết định (node 'Cài đặt').
   const SECTIONS = [
-    { key: 'collect', trigger: 'Mỗi 4 giờ: thu bài', tag: 'Việc: thu bài', rule: { field: 'hours', hoursInterval: 4 } },
-    { key: 'translate', trigger: 'Mỗi 5 phút: dịch', tag: 'Việc: dịch', rule: { field: 'minutes', minutesInterval: 5 } },
-    { key: 'publish', trigger: 'Mỗi 2 phút: đăng', tag: 'Việc: đăng', rule: { field: 'minutes', minutesInterval: 2 } },
+    { key: 'collect', trigger: 'Thu bài: kiểm tra mỗi 5 phút', tag: 'Việc: thu bài', rule: { field: 'minutes', minutesInterval: 5 } },
+    { key: 'translate', trigger: 'Dịch: mỗi 5 phút', tag: 'Việc: dịch', rule: { field: 'minutes', minutesInterval: 5 } },
+    { key: 'publish', trigger: 'Đăng: mỗi 2 phút', tag: 'Việc: đăng', rule: { field: 'minutes', minutesInterval: 2 } },
   ];
   const ROW = { collect: -3, translate: 0, publish: 3 };
 
@@ -239,9 +242,9 @@ function buildAutopost(v) {
     name: 'Config',
     type: 'n8n-nodes-base.set',
     typeVersion: 3.4,
-    col: 2,
+    col: 0,
     row: 0,
-    notes: 'SỬA Ở ĐÂY — chỗ duy nhất cần điền: sheet_id, page_id, crawler_token (build từ .env thì đã điền sẵn)',
+    notes: 'Điền sheet_id, page_id, crawler_token (build từ .env thì đã điền sẵn). Còn lại là mặc định — đổi lịch / số lượng ở tab Settings trong Sheet.',
     notesInFlow: true,
     parameters: {
       assignments: {
@@ -262,18 +265,132 @@ function buildAutopost(v) {
           { id: 'c13', name: 'stuck_posting_minutes', value: 15, type: 'number' },
           { id: 'c14', name: 'graph_version', value: GRAPH_VERSION, type: 'string' },
           { id: 'c15', name: 'timezone', value: 'Asia/Ho_Chi_Minh', type: 'string' },
+          // Lịch — tab Settings ghi đè được (xem node 'Cài đặt').
+          { id: 'c16', name: 'crawl_every_hours', value: 4, type: 'number' },
+          { id: 'c17', name: 'crawl_times', value: '', type: 'string' },
+          { id: 'c18', name: 'translate_hours', value: '', type: 'string' },
+          { id: 'c19', name: 'publish_hours', value: '', type: 'string' },
+          { id: 'c20', name: 'publish_gap_minutes', value: 0, type: 'number' },
         ],
       },
       options: {},
     },
   });
 
+  const readSettings = sheetsRead(wf, 'Sheets: Đọc Settings', 'Settings', { col: 1, row: 0, onError: 'continueRegularOutput' });
+
+  // Gộp tab Settings (key | value) đè lên Config, rồi quyết định lượt này có chạy không.
+  // Chạy tay (Execute workflow) thì bỏ qua lịch để thử ngay được.
+  const settings = code(wf, 'Cài đặt', `
+${SHARED_JS}
+const base = $('Config').first().json;
+// Không cho Sheet đổi các khoá này: sai là workflow ghi nhầm Sheet / đăng nhầm Page.
+const LOCKED = ['section', 'sheet_id', 'page_id', 'crawler_token', 'crawler_url'];
+const OFF = ['off', 'tắt', 'tat', 'dừng', 'dung', 'no', 'false', 'không', 'khong'];
+const cfg = { ...base };
+const warnings = [];
+
+$input.all().forEach((item) => {
+  const r = item.json || {};
+  const key = String(r.key ?? '').trim();
+  const raw = r.value;
+  if (!key || raw === undefined || raw === null || String(raw).trim() === '') return;
+  if (LOCKED.includes(key) || !(key in base)) {
+    warnings.push('bỏ qua khoá lạ "' + key + '"');
+    return;
+  }
+  const def = base[key];
+  if (typeof def === 'number') {
+    const n = typeof raw === 'number' ? raw : Number(String(raw).trim().replace(',', '.'));
+    if (isFinite(n)) cfg[key] = n;
+    else warnings.push(key + ' phải là số');
+  } else if (typeof def === 'boolean') {
+    cfg[key] = typeof raw === 'boolean' ? raw : isTruthy(raw);
+  } else {
+    cfg[key] = typeof raw === 'number' ? raw : String(raw).trim();
+  }
+});
+
+// "7", "7h", "7h30", "07:30", "7:30:00 PM" => "HH:MM". Ô Sheet tự đổi sang giờ => số < 1.
+const parseTime = (v) => {
+  if (typeof v === 'number' && v >= 0 && v < 1) {
+    const m = Math.round(v * 1440);
+    return String(Math.floor(m / 60)).padStart(2, '0') + ':' + String(m % 60).padStart(2, '0');
+  }
+  const m = String(v).trim().toLowerCase().match(/^(\\d{1,2})(?:\\s*[:h.]\\s*(\\d{1,2})?)?(?::\\d{2})?\\s*(am|pm|sa|ch)?$/);
+  if (!m) return null;
+  let h = Number(m[1]);
+  const mi = Number(m[2] || 0);
+  if ((m[3] === 'pm' || m[3] === 'ch') && h < 12) h += 12;
+  if ((m[3] === 'am' || m[3] === 'sa') && h === 12) h = 0;
+  if (h > 24 || mi > 59 || (h === 24 && mi > 0)) return null;
+  return String(h).padStart(2, '0') + ':' + String(mi).padStart(2, '0');
+};
+const isOff = (v) => OFF.includes(String(v ?? '').trim().toLowerCase());
+const parts = (v) => (typeof v === 'number' ? [v] : String(v ?? '').split(/[,;\\n]+/).map((x) => x.trim()).filter(Boolean));
+
+// Khung giờ "08:00-11:00, 19:00-22:00". null = cả ngày, [] = tắt.
+const windowsOf = (key) => {
+  const v = cfg[key];
+  if (v === '' || v === undefined || v === null) return null;
+  if (isOff(v)) return [];
+  const out = [];
+  parts(v).forEach((p) => {
+    const [a, b] = p.split(/\\s*(?:-|–|—|đến|to)\\s*/).map(parseTime);
+    if (a && b) out.push([a, b]);
+    else warnings.push(key + ': không hiểu "' + p + '"');
+  });
+  return out.length ? out : null; // viết sai hết => coi như cả ngày, có cảnh báo
+};
+const inWindows = (wins, hm) => wins === null || wins.some(([a, b]) => (a === b) || (a < b ? a <= hm && hm < b : hm >= a || hm < b));
+
+const now = nowIso(cfg.timezone);
+const hm = now.slice(11, 16);
+const manual = typeof $execution !== 'undefined' && ['test', 'manual'].includes($execution.mode);
+let run = true;
+let why = '';
+
+if (cfg.section === 'collect') {
+  // Nhớ lần thu gần nhất trong static data của workflow (chỉ lưu khi chạy theo lịch).
+  const state = $getWorkflowStaticData('global');
+  const times = isOff(cfg.crawl_times) ? null : parts(cfg.crawl_times).map(parseTime).filter(Boolean).sort();
+  if (times === null) {
+    run = false;
+    why = 'crawl_times = tắt';
+  } else if (times.length) {
+    const passed = times.filter((t) => t <= hm);
+    const slot = passed.length ? now.slice(0, 10) + ' ' + passed[passed.length - 1] + ':00' : '';
+    run = slot !== '' && !(String(state.last_crawl_at || '') >= slot);
+    why = run ? 'đến giờ ' + slot.slice(11, 16) : 'chưa đến giờ thu (' + times.join(', ') + ')';
+  } else {
+    const hours = Number(cfg.crawl_every_hours);
+    // Trừ 90 giây để nhịp 5 phút không làm lịch trôi dần.
+    run = hours > 0 && (!state.last_crawl_ms || Date.now() - state.last_crawl_ms >= hours * 3600000 - 90000);
+    why = hours > 0 ? (run ? 'đủ ' + hours + ' giờ' : 'chưa đủ ' + hours + ' giờ') : 'crawl_every_hours = 0 (tắt)';
+  }
+  if (run && !manual) {
+    // Ghi ngay khi bắt đầu: crawl lỗi cũng không bị thử lại mỗi 5 phút.
+    state.last_crawl_ms = Date.now();
+    state.last_crawl_at = now;
+  }
+} else if (cfg.section === 'translate') {
+  run = inWindows(windowsOf('translate_hours'), hm);
+  why = run ? '' : 'ngoài translate_hours';
+} else if (cfg.section === 'publish') {
+  // Nhánh đăng vẫn chạy để gỡ bài kẹt POSTING; 'Chọn bài đến hạn' xem publish_open.
+  cfg.publish_open = inWindows(windowsOf('publish_hours'), hm);
+}
+
+if (!run && !manual) return [];
+return [{ json: { ...cfg, manual, schedule_note: why, settings_warnings: warnings } }];
+`, { col: 2, row: 0 });
+
   for (const s of SECTIONS) {
     node(wf, {
       name: s.trigger,
       type: 'n8n-nodes-base.scheduleTrigger',
       typeVersion: 1.2,
-      col: 0,
+      col: -2,
       row: ROW[s.key],
       parameters: { rule: { interval: [s.rule] } },
     });
@@ -281,7 +398,7 @@ function buildAutopost(v) {
       name: s.tag,
       type: 'n8n-nodes-base.set',
       typeVersion: 3.4,
-      col: 1,
+      col: -1,
       row: ROW[s.key],
       parameters: {
         assignments: { assignments: [{ id: 's1', name: 'section', value: s.key, type: 'string' }] },
@@ -317,7 +434,7 @@ function buildAutopost(v) {
       options: {},
     },
   });
-  connect(wf, config, route);
+  chain(wf, config, readSettings, settings, route);
 
   /* ------------------------------------------------ 1. Thu bài (mỗi 4 giờ) */
 
@@ -345,7 +462,7 @@ return [{ json: { existing_keys: keys, max_post_number: maxNum } }];
 
   const sources = code(wf, 'Lọc nguồn đang bật', `
 ${SHARED_JS}
-const cfg = $('Config').first().json;
+const cfg = $('Cài đặt').first().json;
 const out = [];
 for (const item of $input.all()) {
   const r = item.json || {};
@@ -377,7 +494,7 @@ return out;
 
   const normCrawler = code(wf, 'Chuẩn hoá bài crawler', `
 ${SHARED_JS}
-const cfg = $('Config').first().json;
+const cfg = $('Cài đặt').first().json;
 const sources = $('Lọc nguồn đang bật').all().map((i) => i.json);
 const skipVideo = String(cfg.skip_video_posts).toLowerCase() !== 'false';
 const out = [];
@@ -418,7 +535,7 @@ return out;
 
   const dedupe = code(wf, 'Bỏ trùng + tạo post_id', `
 ${SHARED_JS}
-const cfg = $('Config').first().json;
+const cfg = $('Cài đặt').first().json;
 const known = $('Gom bài đã có').first().json;
 const seen = new Set(known.existing_keys || []);
 const prefix = String(cfg.post_id_prefix || 'AP');
@@ -485,7 +602,7 @@ return [{ json: { prompt: prompt || DEFAULT_PROMPT, from_sheet: Boolean(prompt) 
 
   const pickT = code(wf, 'Chọn bài cần dịch', `
 ${SHARED_JS}
-const cfg = $('Config').first().json;
+const cfg = $('Cài đặt').first().json;
 const template = $('Lấy prompt').first().json.prompt;
 const limit = Number(cfg.translate_per_run ?? 3);
 const out = [];
@@ -521,7 +638,7 @@ return out.slice(0, limit);
 
   const applyT = code(wf, 'Gắn bản dịch', `
 ${SHARED_JS}
-const cfg = $('Config').first().json;
+const cfg = $('Cài đặt').first().json;
 const asked = $('Chọn bài cần dịch').all();
 const stamp = nowIso(cfg.timezone);
 
@@ -579,7 +696,7 @@ return $input.all().map((item, i) => {
   // KHÔNG tự đăng lại vì bài có thể đã lên Page — chỉ chuyển ERROR để bạn kiểm tra.
   const stuck = code(wf, 'Tìm bài kẹt POSTING', `
 ${SHARED_JS}
-const cfg = $('Config').first().json;
+const cfg = $('Cài đặt').first().json;
 const minutes = Number(cfg.stuck_posting_minutes ?? 15);
 const cutoff = nowIso(cfg.timezone, new Date(Date.now() - minutes * 60000));
 const stamp = nowIso(cfg.timezone);
@@ -604,8 +721,21 @@ return out;
   // Mỗi lượt đăng đúng 1 bài: đơn giản, và giãn cách giữa các bài để tránh bị Facebook chặn.
   const due = code(wf, 'Chọn bài đến hạn', `
 ${SHARED_JS}
-const cfg = $('Config').first().json;
+const cfg = $('Cài đặt').first().json;
 const now = nowIso(cfg.timezone);
+if (!cfg.manual) {
+  // Ngoài publish_hours: bài tick / hẹn giờ cứ nằm chờ, mở khung giờ thì lên.
+  if (cfg.publish_open === false) return [];
+  const gap = Number(cfg.publish_gap_minutes || 0);
+  if (gap > 0) {
+    const cutoff = nowIso(cfg.timezone, new Date(Date.now() - gap * 60000));
+    const recent = $input.all().some((item) => {
+      const t = toSortable((item.json || {}).posted_at);
+      return t !== '' && t > cutoff;
+    });
+    if (recent) return [];
+  }
+}
 const candidates = [];
 $input.all().forEach((item, index) => {
   const r = item.json || {};
@@ -626,7 +756,7 @@ return candidates.slice(0, 1).map(({ sort, ...r }) => ({ json: r }));
 
   const check = code(wf, 'Kiểm tra bài', `
 ${SHARED_JS}
-const cfg = $('Config').first().json;
+const cfg = $('Cài đặt').first().json;
 const r = $json;
 const minImages = Number(cfg.min_images ?? 1);
 const maxImages = Math.min(Number(cfg.max_images ?? 10), 10);
