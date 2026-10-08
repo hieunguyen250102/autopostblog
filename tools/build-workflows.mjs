@@ -1,40 +1,70 @@
 #!/usr/bin/env node
 /**
- * Sinh các file JSON workflow cho n8n (import được trực tiếp vào n8n).
+ * Sinh workflow n8n duy nhất: n8n/workflows/autopost.json (import thẳng vào n8n).
  *
  *   node tools/build-workflows.mjs
  *
- * Vì các node Code của n8n chứa nhiều JavaScript, viết JSON bằng tay rất dễ sai
- * escape. File này là "nguồn sự thật": sửa ở đây rồi build lại.
+ * Một workflow, ba việc chạy theo lịch, dùng chung một node Config:
+ *   - Mỗi 4 giờ:  thu bài mới từ các page nguồn (service fb-crawler) → Sheet, NEED_TRANSLATE
+ *   - Mỗi 5 phút: dịch bài NEED_TRANSLATE bằng Gemini API → en_text, REVIEW
+ *   - Mỗi 2 phút: đăng 1 bài đã tick publish_now / đến giờ scheduled_at; gỡ bài kẹt POSTING
+ *
+ * Các node Code chứa nhiều JavaScript, viết JSON bằng tay rất dễ sai escape. File
+ * này là "nguồn sự thật": sửa ở đây rồi build lại.
  */
 
-import { writeFileSync, mkdirSync } from 'node:fs';
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT_DIR = join(ROOT, 'n8n', 'workflows');
+// Bản đã điền sheet id / page id / token từ .env — thư mục này nằm trong .gitignore.
+const LOCAL_DIR = join(ROOT, 'n8n', 'local');
+const OUT_FILE = 'autopost.json';
+
+/**
+ * Giá trị riêng KHÔNG được nằm trong file có trong git. n8n/workflows/ luôn giữ
+ * placeholder; nếu .env có giá trị thì sinh thêm bản đã điền sẵn ở n8n/local/.
+ */
+const PLACEHOLDERS = {
+  sheet_id: 'DAN_GOOGLE_SHEET_ID_VAO_DAY',
+  page_id: 'DAN_FACEBOOK_PAGE_ID_VAO_DAY',
+  crawler_token: 'DOI_THANH_CRAWLER_TOKEN',
+};
+
+function readEnv() {
+  const file = join(ROOT, '.env');
+  if (!existsSync(file)) return {};
+  const env = {};
+  for (const line of readFileSync(file, 'utf8').split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*?)\s*$/);
+    if (m && m[2]) env[m[1]] = m[2].replace(/^(['"])(.*)\1$/, '$2');
+  }
+  return env;
+}
 
 /* ------------------------------------------------------------------ helpers */
 
 const GRAPH_VERSION = 'v21.0';
+// Ô Google Sheet chứa tối đa 50.000 ký tự.
+const MAX_CELL_CHARS = 45000;
 
 function workflow(name) {
-  return { __cursor: 0, name, nodes: [], connections: {}, settings: { executionOrder: 'v1' }, pinData: {} };
+  return { name, nodes: [], connections: {}, settings: { executionOrder: 'v1' }, pinData: {} };
 }
 
-/**
- * Thêm node vào workflow. `col`/`row` chỉ dùng để trải node trên canvas.
- */
+/** Thêm node. `col`/`row` chỉ để trải node trên canvas. */
 function node(wf, def) {
-  const { name, type, typeVersion, parameters = {}, col, row = 0, ...rest } = def;
+  const { name, type, typeVersion, parameters = {}, col = 0, row = 0, ...rest } = def;
+  if (wf.nodes.some((n) => n.name === name)) throw new Error(`Trùng tên node: ${name}`);
   wf.nodes.push({
     parameters,
     id: idFor(wf.name, name),
     name,
     type,
     typeVersion,
-    position: [260 + (col ?? wf.__cursor++) * 240, 300 + row * 190],
+    position: [260 + col * 240, 300 + row * 190],
     ...rest,
   });
   return name;
@@ -59,7 +89,7 @@ function connect(wf, from, to, { fromOutput = 0, toInput = 0 } = {}) {
   entry.main[fromOutput].push({ node: to, type: 'main', index: toInput });
 }
 
-/** Nối chuỗi node theo thứ tự: chain(wf, a, b, c) => a→b→c */
+/** chain(wf, a, b, c) => a→b→c */
 function chain(wf, ...names) {
   for (let i = 0; i < names.length - 1; i += 1) connect(wf, names[i], names[i + 1]);
   return names[names.length - 1];
@@ -68,9 +98,9 @@ function chain(wf, ...names) {
 const sheetsDoc = () => ({ __rl: true, value: "={{ $('Config').first().json.sheet_id }}", mode: 'id' });
 const sheetsTab = (tab) => ({ __rl: true, value: tab, mode: 'name' });
 
-const CRED_SHEETS = 'Cần chọn credential: Google Sheets OAuth2 (hoặc Service Account).';
-const CRED_DRIVE = 'Cần chọn credential: Google Drive OAuth2 (Predefined Credential Type).';
+const CRED_SHEETS = 'Cần chọn credential: Google Sheets OAuth2.';
 const CRED_FB = 'Cần chọn credential: Facebook Graph API — dán PAGE ACCESS TOKEN dài hạn.';
+const CRED_GEMINI = 'Cần chọn credential: Header Auth — Name: x-goog-api-key, Value: API key từ aistudio.google.com';
 
 function sheetsRead(wf, name, tab, opts = {}) {
   return node(wf, {
@@ -95,21 +125,16 @@ function sheetsWrite(wf, name, tab, operation, matchingColumns, opts = {}) {
       documentId: sheetsDoc(),
       sheetName: sheetsTab(tab),
       columns: { mappingMode: 'autoMapInputData', value: {}, matchingColumns, schema: [] },
-      options: {},
+      // RAW: Sheets không tự đổi "2026-01-31 08:30" sang ngày theo locale, và không coi
+      // nội dung bắt đầu bằng "=" / "+" (vd. số điện thoại) là công thức.
+      options: { cellFormat: 'RAW' },
     },
     ...opts,
   });
 }
 
 function code(wf, name, jsCode, opts = {}) {
-  const { mode, ...rest } = opts;
-  return node(wf, {
-    name,
-    type: 'n8n-nodes-base.code',
-    typeVersion: 2,
-    parameters: mode ? { mode, jsCode } : { jsCode },
-    ...rest,
-  });
+  return node(wf, { name, type: 'n8n-nodes-base.code', typeVersion: 2, parameters: { jsCode }, ...opts });
 }
 
 function ifNode(wf, name, conditions, opts = {}) {
@@ -130,38 +155,21 @@ function ifNode(wf, name, conditions, opts = {}) {
   });
 }
 
-const eq = (left, right) => ({ leftValue: left, rightValue: right, operator: { type: 'string', operation: 'equals' } });
 const gt = (left, right) => ({ leftValue: left, rightValue: right, operator: { type: 'number', operation: 'gt' } });
 const isTrue = (left) => ({ leftValue: left, rightValue: '', operator: { type: 'boolean', operation: 'true', singleValue: true } });
-
-function respond(wf, name, body, code_ = 200, opts = {}) {
-  return node(wf, {
-    name,
-    type: 'n8n-nodes-base.respondToWebhook',
-    typeVersion: 1.1,
-    parameters: { respondWith: 'json', responseBody: body, options: { responseCode: code_ } },
-    ...opts,
-  });
-}
 
 function http(wf, name, parameters, opts = {}) {
   return node(wf, { name, type: 'n8n-nodes-base.httpRequest', typeVersion: 4.2, parameters, ...opts });
 }
 
-function driveAuth() {
-  return { authentication: 'predefinedCredentialType', nodeCredentialType: 'googleDriveOAuth2Api' };
-}
-
-function fbAuth() {
-  return { authentication: 'predefinedCredentialType', nodeCredentialType: 'facebookGraphApi' };
-}
+const fbAuth = () => ({ authentication: 'predefinedCredentialType', nodeCredentialType: 'facebookGraphApi' });
+const cfgExpr = (key) => `$('Config').first().json.${key}`;
 
 /** Đoạn JS dùng lại trong nhiều node Code. */
 const SHARED_JS = `
 const TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];
 const isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());
-const nowIso = (tz) => {
-  const d = new Date();
+const nowIso = (tz, d = new Date()) => {
   try {
     const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);
     const g = (t) => p.find((x) => x.type === t).value;
@@ -171,69 +179,154 @@ const nowIso = (tz) => {
   }
 };
 const rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);
+// Đưa ngày giờ đọc từ Sheet về dạng "YYYY-MM-DD HH:mm:ss" để so sánh chuỗi.
+// Sheet có thể trả: chuỗi ISO, "31/01/2026 08:30" (locale Việt Nam) hoặc số serial.
+// Không hiểu được => '' (người gọi coi như không có giá trị).
+const toSortable = (v) => {
+  if (v === null || v === undefined || v === '') return '';
+  const pad = (x) => String(x ?? 0).padStart(2, '0');
+  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);
+  if (typeof v === 'number' && isFinite(v)) {
+    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.
+    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');
+  }
+  const s = String(v).trim();
+  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);
+  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);
+  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);
+  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);
+  return '';
+};
+const errMsg = (e) => {
+  if (!e) return 'không rõ lỗi';
+  if (typeof e === 'string') return e;
+  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);
+};
 `.trim();
 
-/* ------------------------------------------------- workflow 01: thu bài viết */
+const DEFAULT_PROMPT = [
+  'Bạn là biên dịch viên nội dung mạng xã hội. Dịch bài đăng Facebook tiếng Việt dưới đây sang tiếng Anh tự nhiên, dễ đọc với người đọc quốc tế.',
+  '',
+  'Yêu cầu:',
+  '- Giữ nguyên ý, giọng văn, cách xuống dòng và emoji của bài gốc.',
+  '- Bỏ số điện thoại, link, lời kêu gọi inbox/comment và mọi chỗ nhắc tên/thương hiệu của page gốc.',
+  '- Kết thúc bài bằng 1 dòng hashtag riêng (cách nội dung 1 dòng trống): 3–5 hashtag tiếng Anh sát với nội dung, viết liền kiểu CamelCase (vd. #VietnamTravel, #StreetFood), ưu tiên hashtag người đọc quốc tế hay tìm.',
+  '- Hashtag có sẵn trong bài gốc: dịch sang tiếng Anh nếu có nghĩa và gộp vào dòng hashtag cuối, không lặp lại; bỏ hashtag mang tên page gốc và hashtag chung chung như #viral, #fyp, #trending.',
+  '- Không thêm lời giải thích, không đặt tiêu đề, không bọc trong dấu ngoặc kép hay code block.',
+  '- Chỉ trả về bài tiếng Anh hoàn chỉnh (nội dung + dòng hashtag).',
+  '',
+  'Bài gốc:',
+  '"""',
+  '{{NOI_DUNG}}',
+  '"""',
+].join('\n');
 
-function buildCollect() {
-  const wf = workflow('AutoPost 01 - Thu bai tu page nguon');
+/* ---------------------------------------------------------------- workflow */
 
-  const schedule = node(wf, {
-    name: 'Mỗi 2 giờ',
-    type: 'n8n-nodes-base.scheduleTrigger',
-    typeVersion: 1.2,
-    col: 0,
-    row: -1,
-    parameters: { rule: { interval: [{ field: 'hours', hoursInterval: 2 }] } },
-  });
+function buildAutopost(v) {
+  const wf = workflow('AutoPost');
 
-  const manual = node(wf, {
-    name: 'Chạy thử thủ công',
-    type: 'n8n-nodes-base.manualTrigger',
-    typeVersion: 1,
-    col: 0,
-    row: 0,
-    parameters: {},
-  });
+  /* ---- 3 lịch chạy → gắn tên việc → Config chung → rẽ nhánh theo việc ---- */
 
-  const hook = node(wf, {
-    name: 'Webhook: Thu bài',
-    type: 'n8n-nodes-base.webhook',
-    typeVersion: 2,
-    col: 0,
-    row: 1,
-    webhookId: idFor(wf.name, 'webhook-collect'),
-    parameters: { httpMethod: 'POST', path: 'autopost-collect', responseMode: 'onReceived', responseData: 'noData', options: {} },
-  });
+  const SECTIONS = [
+    { key: 'collect', trigger: 'Mỗi 4 giờ: thu bài', tag: 'Việc: thu bài', rule: { field: 'hours', hoursInterval: 4 } },
+    { key: 'translate', trigger: 'Mỗi 5 phút: dịch', tag: 'Việc: dịch', rule: { field: 'minutes', minutesInterval: 5 } },
+    { key: 'publish', trigger: 'Mỗi 2 phút: đăng', tag: 'Việc: đăng', rule: { field: 'minutes', minutesInterval: 2 } },
+  ];
+  const ROW = { collect: -3, translate: 0, publish: 3 };
 
   const config = node(wf, {
     name: 'Config',
     type: 'n8n-nodes-base.set',
     typeVersion: 3.4,
-    col: 1,
-    notes: 'SỬA Ở ĐÂY: sheet_id + múi giờ',
+    col: 2,
+    row: 0,
+    notes: 'SỬA Ở ĐÂY — chỗ duy nhất cần điền: sheet_id, page_id, crawler_token (build từ .env thì đã điền sẵn)',
     notesInFlow: true,
     parameters: {
       assignments: {
         assignments: [
-          { id: 'a1', name: 'sheet_id', value: 'DAN_GOOGLE_SHEET_ID_VAO_DAY', type: 'string' },
-          { id: 'a2', name: 'graph_version', value: GRAPH_VERSION, type: 'string' },
-          { id: 'a3', name: 'timezone', value: 'Asia/Ho_Chi_Minh', type: 'string' },
-          { id: 'a4', name: 'default_max_posts', value: 5, type: 'number' },
-          { id: 'a5', name: 'post_id_prefix', value: 'AP', type: 'string' },
+          { id: 'c00', name: 'section', value: '={{ $json.section }}', type: 'string' },
+          { id: 'c01', name: 'sheet_id', value: v.sheet_id, type: 'string' },
+          { id: 'c02', name: 'page_id', value: v.page_id, type: 'string' },
+          { id: 'c03', name: 'crawler_url', value: 'http://fb-crawler:8000/crawl', type: 'string' },
+          { id: 'c04', name: 'crawler_token', value: v.crawler_token, type: 'string' },
+          { id: 'c05', name: 'default_max_posts', value: 5, type: 'number' },
+          { id: 'c06', name: 'skip_video_posts', value: true, type: 'boolean' },
+          { id: 'c07', name: 'post_id_prefix', value: 'AP', type: 'string' },
+          { id: 'c08', name: 'gemini_model', value: 'gemini-3.5-flash-lite', type: 'string' },
+          { id: 'c09', name: 'translate_per_run', value: 3, type: 'number' },
+          { id: 'c10', name: 'min_images', value: 1, type: 'number' },
+          { id: 'c11', name: 'max_images', value: 10, type: 'number' },
+          { id: 'c12', name: 'min_content_chars', value: 50, type: 'number' },
+          { id: 'c13', name: 'stuck_posting_minutes', value: 15, type: 'number' },
+          { id: 'c14', name: 'graph_version', value: GRAPH_VERSION, type: 'string' },
+          { id: 'c15', name: 'timezone', value: 'Asia/Ho_Chi_Minh', type: 'string' },
         ],
       },
       options: {},
     },
   });
 
-  const readPosts = sheetsRead(wf, 'Sheets: Đọc Posts', 'Posts', { col: 2 });
+  for (const s of SECTIONS) {
+    node(wf, {
+      name: s.trigger,
+      type: 'n8n-nodes-base.scheduleTrigger',
+      typeVersion: 1.2,
+      col: 0,
+      row: ROW[s.key],
+      parameters: { rule: { interval: [s.rule] } },
+    });
+    node(wf, {
+      name: s.tag,
+      type: 'n8n-nodes-base.set',
+      typeVersion: 3.4,
+      col: 1,
+      row: ROW[s.key],
+      parameters: {
+        assignments: { assignments: [{ id: 's1', name: 'section', value: s.key, type: 'string' }] },
+        options: {},
+      },
+    });
+    chain(wf, s.trigger, s.tag, config);
+  }
+
+  const route = node(wf, {
+    name: 'Chọn việc',
+    type: 'n8n-nodes-base.switch',
+    typeVersion: 3.2,
+    col: 3,
+    row: 0,
+    parameters: {
+      rules: {
+        values: SECTIONS.map((s) => ({
+          conditions: {
+            options: { caseSensitive: true, leftValue: '', typeValidation: 'strict', version: 2 },
+            conditions: [{
+              id: `r-${s.key}`,
+              leftValue: '={{ $json.section }}',
+              rightValue: s.key,
+              operator: { type: 'string', operation: 'equals' },
+            }],
+            combinator: 'and',
+          },
+          renameOutput: true,
+          outputKey: s.tag.replace('Việc: ', ''),
+        })),
+      },
+      options: {},
+    },
+  });
+  connect(wf, config, route);
+
+  /* ------------------------------------------------ 1. Thu bài (mỗi 4 giờ) */
+
+  const r1 = ROW.collect;
+  const readPostsC = sheetsRead(wf, 'Sheets: Đọc Posts (thu)', 'Posts', { col: 4, row: r1 });
 
   // Gom về ĐÚNG 1 item: node Google Sheets chạy một lần cho mỗi item đầu vào,
-  // nếu để nguyên 500 dòng Posts thì node đọc Sources sẽ bị gọi 500 lần.
-  const summarizePosts = code(wf, 'Gom bài đã có', `
-${SHARED_JS}
-const cfg = $('Config').first().json;
+  // để nguyên 500 dòng Posts thì node đọc Sources sẽ bị gọi 500 lần.
+  const known = code(wf, 'Gom bài đã có', `
 const rows = $input.all().map((i) => i.json).filter((r) => r && Object.keys(r).length);
 const keys = [];
 let maxNum = 0;
@@ -245,132 +338,83 @@ for (const r of rows) {
   const m = String(r.post_id ?? '').trim().match(/(\\d+)\\s*$/);
   if (m) maxNum = Math.max(maxNum, Number(m[1]));
 }
-return [{ json: { ...cfg, existing_keys: keys, max_post_number: maxNum, existing_rows: rows.length } }];
-`, { col: 3 });
+return [{ json: { existing_keys: keys, max_post_number: maxNum } }];
+`, { col: 5, row: r1 });
 
-  const readSources = sheetsRead(wf, 'Sheets: Đọc Sources', 'Sources', { col: 4 });
+  const readSources = sheetsRead(wf, 'Sheets: Đọc Sources', 'Sources', { col: 6, row: r1 });
 
-  const filterSources = code(wf, 'Lọc nguồn đang bật', `
+  const sources = code(wf, 'Lọc nguồn đang bật', `
 ${SHARED_JS}
 const cfg = $('Config').first().json;
 const out = [];
-$input.all().forEach((item, index) => {
+for (const item of $input.all()) {
   const r = item.json || {};
-  if (!isTruthy(r.active)) return;
-  const ref = String(r.page_id_or_url ?? '').trim();
-  const mode = String(r.mode ?? 'graph').trim().toLowerCase() || 'graph';
-  const feedUrl = String(r.feed_url ?? '').trim();
-  if (mode === 'rss' && !feedUrl) return;
-  if (mode !== 'rss' && !ref) return;
-  // Chấp nhận dán cả URL page: lấy phần cuối làm id/username.
-  let pageRef = ref;
-  const m = ref.match(/facebook\\.com\\/(?:profile\\.php\\?id=)?([^/?#]+)/i);
-  if (m) pageRef = m[1];
-  pageRef = pageRef.replace(/^@/, '');
+  if (!isTruthy(r.active)) continue;
+  const ref = String(r.page_url ?? r.page_id_or_url ?? '').trim();
+  if (!ref) continue;
   const max = Number(r.max_posts) > 0 ? Number(r.max_posts) : Number(cfg.default_max_posts) || 5;
-  out.push({
-    json: {
-      row_number: rowNumberOf(r, index),
-      source_name: String(r.source_name ?? pageRef).trim() || pageRef,
-      page_ref: pageRef,
-      mode,
-      feed_url: feedUrl,
-      max_posts: Math.min(max, 25),
-    },
-  });
-});
-if (!out.length) throw new Error('Sheet "Sources" chưa có nguồn nào bật active = TRUE');
+  out.push({ json: {
+    source_name: String(r.source_name ?? '').trim() || ref,
+    page: ref,
+    max_posts: Math.min(max, 10),
+  } });
+}
+if (!out.length) throw new Error('Tab "Sources" chưa có page nào bật active');
 return out;
-`, { col: 5 });
+`, { col: 7, row: r1 });
 
-  const isRss = ifNode(wf, 'Nguồn là RSS?', [eq('={{ $json.mode }}', 'rss')], { col: 6 });
+  // Gọi lần lượt từng page, nghỉ 20 giây giữa các page.
+  const crawler = http(wf, 'Crawler: Lấy bài của page', {
+    method: 'POST',
+    url: `={{ ${cfgExpr('crawler_url')} }}`,
+    sendHeaders: true,
+    headerParameters: { parameters: [{ name: 'X-Crawler-Token', value: `={{ ${cfgExpr('crawler_token')} }}` }] },
+    sendBody: true,
+    specifyBody: 'json',
+    jsonBody: '={{ JSON.stringify({ page: $json.page, max_posts: $json.max_posts }) }}',
+    options: { batching: { batch: { batchSize: 1, batchInterval: 20000 } }, timeout: 240000 },
+  }, { col: 8, row: r1, onError: 'continueRegularOutput', notes: 'Gọi service fb-crawler (docker compose).' });
 
-  const rss = node(wf, {
-    name: 'Đọc RSS',
-    type: 'n8n-nodes-base.rssFeedRead',
-    typeVersion: 1.1,
-    col: 7,
-    row: -1,
-    onError: 'continueRegularOutput',
-    parameters: { url: '={{ $json.feed_url }}', options: {} },
-  });
-
-  const graph = http(wf, 'Graph: Lấy bài của page', {
-    url: "=https://graph.facebook.com/{{ $('Config').first().json.graph_version }}/{{ $json.page_ref }}/posts",
-    ...fbAuth(),
-    sendQuery: true,
-    queryParameters: {
-      parameters: [
-        { name: 'fields', value: 'id,message,story,created_time,permalink_url,full_picture,attachments{media_type,url}' },
-        { name: 'limit', value: '={{ $json.max_posts }}' },
-      ],
-    },
-    options: {},
-  }, { col: 7, row: 1, notes: CRED_FB, onError: 'continueRegularOutput' });
-
-  const normRss = code(wf, 'Chuẩn hoá bài RSS', `
+  const normCrawler = code(wf, 'Chuẩn hoá bài crawler', `
 ${SHARED_JS}
-// Ưu tiên item pairing; nếu node RSS không truyền pairedItem thì suy ra nguồn rss.
-let src;
-try {
-  src = $('Lọc nguồn đang bật').item.json;
-} catch (e) {
-  src = null;
-}
-if (!src || src.mode !== 'rss') {
-  const rssSources = $('Lọc nguồn đang bật').all().map((i) => i.json).filter((x) => x.mode === 'rss');
-  src = rssSources.length === 1 ? rssSources[0] : { source_name: src ? src.source_name : 'RSS' };
-}
-const r = $json;
-const link = String(r.link ?? r.guid ?? '').trim();
-if (!link) return { json: { __skip: true } };
-return {
-  json: {
-    source_page: src.source_name,
-    source_post_url: link,
-    source_post_id: link,
-    title: String(r.title ?? '').trim().slice(0, 300),
-    summary: String(r.contentSnippet ?? r.content ?? '').replace(/\\s+/g, ' ').trim().slice(0, 500),
-    created_time: r.isoDate || r.pubDate || '',
-  },
-};
-`, { col: 8, row: -1, mode: 'runOnceForEachItem' });
-
-  const normGraph = code(wf, 'Chuẩn hoá bài Graph', `
-${SHARED_JS}
-// Node Graph chỉ nhận nhánh false của IF, nên phải lọc lại đúng danh sách đó
-// để index khớp (nếu lấy cả nguồn rss sẽ gán sai tên page).
-const sources = $('Lọc nguồn đang bật').all().map((i) => i.json).filter((s) => s.mode !== 'rss');
+const cfg = $('Config').first().json;
+const sources = $('Lọc nguồn đang bật').all().map((i) => i.json);
+const skipVideo = String(cfg.skip_video_posts).toLowerCase() !== 'false';
 const out = [];
 const failures = [];
 $input.all().forEach((item, index) => {
-  const src = sources[index] || sources[0] || { source_name: '?' };
+  const src = sources[index] || { source_name: '?' };
   const body = item.json || {};
-  if (body.error) {
-    failures.push(src.source_name + ': ' + (body.error.message || JSON.stringify(body.error)));
+  if (body.error || body.ok === false) {
+    failures.push(src.source_name + ': ' + errMsg(body.error || body));
     return;
   }
-  const posts = Array.isArray(body.data) ? body.data : [];
-  for (const p of posts) {
-    const text = String(p.message ?? p.story ?? '').replace(/\\s+/g, ' ').trim();
-    out.push({
-      json: {
-        source_page: src.source_name,
-        source_post_url: p.permalink_url || ('https://www.facebook.com/' + String(p.id || '').replace('_', '/posts/')),
-        source_post_id: String(p.id ?? ''),
-        title: text.slice(0, 120),
-        summary: text.slice(0, 500),
-        created_time: p.created_time || '',
-      },
-    });
+  // Crawler luôn trả các bài mới nhất (kể cả bài đã thu) => 0 bài là có vấn đề thật.
+  if (!Array.isArray(body.posts) || !body.posts.length) {
+    failures.push(src.source_name + ': không lấy được bài nào (link page sai, page bị ẩn/giới hạn tuổi, hoặc Facebook chặn tạm thời)');
+    return;
+  }
+  for (const p of body.posts) {
+    const images = Array.isArray(p.images) ? p.images.slice(0, 10) : [];
+    // Reel/video không reup bằng ảnh được.
+    if (skipVideo && p.has_video && !images.length) continue;
+    const text = String(p.text || '').replace(/\\r\\n/g, '\\n').trim();
+    out.push({ json: {
+      source_page: src.source_name,
+      source_post_url: p.source_post_url || '',
+      source_post_id: String(p.source_post_id || ''),
+      title: (p.is_shared ? '[Chia sẻ] ' : '') + text.replace(/\\s+/g, ' ').slice(0, 120),
+      source_text: text.slice(0, ${MAX_CELL_CHARS}),
+      source_images: images,
+    } });
   }
 });
-// Một nguồn lỗi không nên chặn các nguồn còn lại; chỉ báo lỗi khi không thu được gì.
-if (!out.length && failures.length) {
-  throw new Error('Graph API lỗi với tất cả nguồn — ' + failures.join(' | '));
+// Một page lỗi không chặn page khác; tất cả đều lỗi thì báo đỏ trong n8n Executions.
+if (failures.length === sources.length) {
+  throw new Error('Crawler lỗi với tất cả page — ' + failures.join(' | '));
 }
 return out;
-`, { col: 8, row: 1 });
+`, { col: 9, row: r1 });
 
   const dedupe = code(wf, 'Bỏ trùng + tạo post_id', `
 ${SHARED_JS}
@@ -383,386 +427,294 @@ const stamp = nowIso(cfg.timezone);
 const rows = [];
 for (const item of $input.all()) {
   const p = item.json || {};
-  if (p.__skip) continue;
   const key = String(p.source_post_id || p.source_post_url || '').trim();
   if (!key || seen.has(key)) continue;
   seen.add(key);
   maxNum += 1;
-  rows.push({
-    json: {
-      post_id: prefix + '-' + String(maxNum).padStart(4, '0'),
-      source_page: p.source_page || '',
-      source_post_url: p.source_post_url || '',
-      source_post_id: p.source_post_id || '',
-      collected_at: stamp,
-      title: p.title || '',
-      summary: p.summary || '',
-      drive_folder_url: '',
-      status: 'NEED_CONTENT',
-      images_count: '',
-      content_chars: '',
-      check_note: 'Chờ dán link folder Drive (nội dung tiếng Anh + ảnh)',
-      scheduled_at: '',
-      posted_at: '',
-      fb_post_id: '',
-      fb_permalink: '',
-      publish_now: false,
-      last_action_at: stamp,
-    },
-  });
+  const hasText = String(p.source_text || '').trim().length > 0;
+  const images = Array.isArray(p.source_images) ? p.source_images : [];
+  rows.push({ json: {
+    post_id: prefix + '-' + String(maxNum).padStart(4, '0'),
+    status: hasText ? 'NEED_TRANSLATE' : 'NEED_CONTENT',
+    publish_now: false,
+    scheduled_at: '',
+    title: p.title || '',
+    en_text: '',
+    source_images: images.join('\\n'),
+    check_note: hasText
+      ? '⏳ Chờ Gemini dịch (tối đa 5 phút)'
+      : 'Bài gốc không có chữ — tự viết nội dung tiếng Anh vào en_text',
+    source_text: p.source_text || '',
+    source_page: p.source_page || '',
+    source_post_url: p.source_post_url || '',
+    source_post_id: p.source_post_id || '',
+    collected_at: stamp,
+    posted_at: '',
+    fb_post_id: '',
+    fb_permalink: '',
+    images_count: images.length,
+    last_action_at: stamp,
+  } });
 }
 return rows;
-`, { col: 9 });
+`, { col: 10, row: r1 });
 
-  const append = sheetsWrite(wf, 'Sheets: Thêm bài mới', 'Posts', 'append', [], { col: 10 });
+  const append = sheetsWrite(wf, 'Sheets: Thêm bài mới', 'Posts', 'append', [], { col: 11, row: r1 });
 
-  connect(wf, schedule, config);
-  connect(wf, manual, config);
-  connect(wf, hook, config);
-  chain(wf, config, readPosts, summarizePosts, readSources, filterSources, isRss);
-  connect(wf, isRss, rss, { fromOutput: 0 });
-  connect(wf, isRss, graph, { fromOutput: 1 });
-  chain(wf, rss, normRss, dedupe);
-  chain(wf, graph, normGraph, dedupe);
-  connect(wf, dedupe, append);
+  connect(wf, route, readPostsC, { fromOutput: 0 });
+  chain(wf, readPostsC, known, readSources, sources, crawler, normCrawler, dedupe, append);
 
-  return wf;
+  /* ----------------------------------------------- 2. Dịch (mỗi 5 phút) */
+
+  const r2 = ROW.translate;
+  // Prompt dùng chung với hộp thoại dịch trong Sheet (tab Prompt, ô A2).
+  const readPrompt = sheetsRead(wf, 'Sheets: Đọc Prompt', 'Prompt', { col: 4, row: r2, onError: 'continueRegularOutput' });
+
+  const pickPrompt = code(wf, 'Lấy prompt', `
+const DEFAULT_PROMPT = ${JSON.stringify(DEFAULT_PROMPT)};
+let prompt = '';
+for (const item of $input.all()) {
+  const values = Object.values(item.json || {}).filter((x) => typeof x === 'string' && x.trim());
+  prompt = values.find((x) => x.includes('{{NOI_DUNG}}')) || values.find((x) => x.length > 80) || '';
+  if (prompt) break;
 }
+return [{ json: { prompt: prompt || DEFAULT_PROMPT, from_sheet: Boolean(prompt) } }];
+`, { col: 5, row: r2 });
 
-/* ----------------------------------------- workflow 02: kiểm tra + đăng bài */
+  const readPostsT = sheetsRead(wf, 'Sheets: Đọc Posts (dịch)', 'Posts', { col: 6, row: r2 });
 
-function buildPublish() {
-  const wf = workflow('AutoPost 02 - Kiem tra va dang bai');
-
-  const hook = node(wf, {
-    name: 'Webhook: Đăng bài',
-    type: 'n8n-nodes-base.webhook',
-    typeVersion: 2,
-    col: 0,
-    webhookId: idFor(wf.name, 'webhook-publish'),
-    parameters: { httpMethod: 'POST', path: 'autopost-publish', responseMode: 'responseNode', options: {} },
-  });
-
-  const config = node(wf, {
-    name: 'Config',
-    type: 'n8n-nodes-base.set',
-    typeVersion: 3.4,
-    col: 1,
-    notes: 'SỬA Ở ĐÂY: sheet_id, page_id, webhook_secret, số ảnh min/max',
-    notesInFlow: true,
-    parameters: {
-      assignments: {
-        assignments: [
-          { id: 'a1', name: 'sheet_id', value: 'DAN_GOOGLE_SHEET_ID_VAO_DAY', type: 'string' },
-          { id: 'a2', name: 'page_id', value: 'DAN_FACEBOOK_PAGE_ID_VAO_DAY', type: 'string' },
-          { id: 'a3', name: 'webhook_secret', value: 'DOI_THANH_CHUOI_BI_MAT_RIENG', type: 'string' },
-          { id: 'a4', name: 'graph_version', value: GRAPH_VERSION, type: 'string' },
-          { id: 'a5', name: 'timezone', value: 'Asia/Ho_Chi_Minh', type: 'string' },
-          { id: 'a6', name: 'min_images', value: 1, type: 'number' },
-          { id: 'a7', name: 'max_images', value: 10, type: 'number' },
-          { id: 'a8', name: 'max_image_mb', value: 8, type: 'number' },
-          { id: 'a9', name: 'min_content_chars', value: 50, type: 'number' },
-        ],
-      },
-      options: {},
-    },
-  });
-
-  const auth = ifNode(wf, 'Đúng secret?', [
-    eq("={{ $('Webhook: Đăng bài').first().json.body.secret }}", "={{ $('Config').first().json.webhook_secret }}"),
-  ], { col: 2 });
-
-  const resp401 = respond(wf, 'Trả 401', '={{ { ok: false, error: "Sai webhook secret" } }}', 401, { col: 3, row: -2 });
-
-  const readPosts = sheetsRead(wf, 'Sheets: Đọc Posts', 'Posts', { col: 3 });
-
-  const findRow = code(wf, 'Tìm dòng bài viết', `
+  const pickT = code(wf, 'Chọn bài cần dịch', `
 ${SHARED_JS}
 const cfg = $('Config').first().json;
-const body = $('Webhook: Đăng bài').first().json.body || {};
-const wantedId = String(body.post_id ?? '').trim();
-const wantedRow = Number(body.row_number ?? 0);
-const action = String(body.action ?? 'publish').trim().toLowerCase() === 'check' ? 'check' : 'publish';
-const force = isTruthy(body.force);
-
-const rows = $input.all().map((i) => i.json).filter((r) => r && Object.keys(r).length);
-let found = null;
-rows.forEach((r, index) => {
-  if (found) return;
-  const rn = rowNumberOf(r, index);
-  if (wantedId && String(r.post_id ?? '').trim() === wantedId) found = { r, rn };
-  else if (!wantedId && wantedRow && rn === wantedRow) found = { r, rn };
+const template = $('Lấy prompt').first().json.prompt;
+const limit = Number(cfg.translate_per_run ?? 3);
+const out = [];
+$input.all().forEach((item, index) => {
+  const r = item.json || {};
+  if (String(r.status ?? '').trim().toUpperCase() !== 'NEED_TRANSLATE') return;
+  const source = String(r.source_text ?? '').trim();
+  if (!source || String(r.en_text ?? '').trim()) return;
+  // split/join thay vì replace: bài gốc có "$&", "$1"... không bị hiểu là mẫu thay thế.
+  const prompt = template.includes('{{NOI_DUNG}}')
+    ? template.split('{{NOI_DUNG}}').join(source)
+    : template + '\\n\\n' + source;
+  out.push({ json: {
+    row_number: rowNumberOf(r, index),
+    post_id: String(r.post_id ?? '').trim(),
+    request_body: { contents: [{ role: 'user', parts: [{ text: prompt }] }] },
+  } });
 });
-if (!found) throw new Error('Không tìm thấy bài "' + (wantedId || ('dòng ' + wantedRow)) + '" trong sheet Posts');
+return out.slice(0, limit);
+`, { col: 7, row: r2 });
 
-const row = found.r;
-const status = String(row.status ?? '').trim().toUpperCase();
-const folderUrl = String(row.drive_folder_url ?? '').trim();
-const folderMatch = folderUrl.match(/[-\\w]{25,}/);
+  // Nghỉ 6 giây giữa các bài để không vượt giới hạn/phút của gói free.
+  const gemini = http(wf, 'Gemini: Dịch', {
+    method: 'POST',
+    url: `=https://generativelanguage.googleapis.com/v1beta/models/{{ ${cfgExpr('gemini_model')} }}:generateContent`,
+    authentication: 'genericCredentialType',
+    genericAuthType: 'httpHeaderAuth',
+    sendBody: true,
+    specifyBody: 'json',
+    jsonBody: '={{ JSON.stringify($json.request_body) }}',
+    options: { batching: { batch: { batchSize: 1, batchInterval: 6000 } }, timeout: 120000 },
+  }, { col: 8, row: r2, onError: 'continueRegularOutput', notes: CRED_GEMINI });
 
-const base = {
-  action,
-  force,
-  post_id: String(row.post_id ?? '').trim(),
-  row_number: found.rn,
-  status_before: status,
-  title: String(row.title ?? '').trim(),
-  drive_folder_url: folderUrl,
-  folder_id: folderMatch ? folderMatch[0] : '',
-  timezone: cfg.timezone,
+  const applyT = code(wf, 'Gắn bản dịch', `
+${SHARED_JS}
+const cfg = $('Config').first().json;
+const asked = $('Chọn bài cần dịch').all();
+const stamp = nowIso(cfg.timezone);
+
+const clean = (t) => {
+  let s = String(t || '').replace(/\\r\\n/g, '\\n').trim();
+  s = s.replace(/^\\\`\\\`\\\`[a-zA-Z]*\\n([\\s\\S]*?)\\n\\\`\\\`\\\`$/, '$1').trim();
+  s = s.replace(/^"""\\n?([\\s\\S]*?)\\n?"""$/, '$1').trim();
+  if (/^"[\\s\\S]*"$/.test(s) && s.indexOf('"', 1) === s.length - 1) s = s.slice(1, -1).trim();
+  return s.replace(/\\n{3,}/g, '\\n\\n');
 };
 
-if (status === 'POSTED' && !force) {
-  return [{ json: { ...base, ok: false, http_code: 409, status_write: 'POSTED', note: 'Bài đã đăng lúc ' + (row.posted_at || '?') + ' — bỏ qua. Muốn đăng lại thì gửi force = true.' } }];
-}
-if (status === 'POSTING' && !force) {
-  return [{ json: { ...base, ok: false, http_code: 409, status_write: 'POSTING', note: 'Bài đang trong tiến trình đăng, chờ hoàn tất.' } }];
-}
-if (status === 'SKIP' && !force) {
-  return [{ json: { ...base, ok: false, http_code: 409, status_write: 'SKIP', note: 'Bài được đánh dấu SKIP.' } }];
-}
-if (!base.folder_id) {
-  return [{ json: { ...base, ok: false, http_code: 400, status_write: 'NEED_CONTENT', note: 'Thiếu / sai link folder Drive ở cột drive_folder_url.' } }];
-}
-return [{ json: { ...base, ok: true } }];
-`, { col: 4 });
+return $input.all().map((item, i) => {
+  const req = (asked[i] || asked[0]).json;
+  const res = item.json || {};
+  const base = { row_number: req.row_number, post_id: req.post_id, last_action_at: stamp };
 
-  const guard = ifNode(wf, 'Được phép chạy?', [isTrue('={{ $json.ok }}')], { col: 5 });
+  if (res.error) {
+    const msg = errMsg(res.error);
+    // Hết quota / quá tải / mạng / sai API key: để nguyên NEED_TRANSLATE, lần sau tự thử lại.
+    if (/429|RESOURCE_EXHAUSTED|quota|50[0-9]|UNAVAILABLE|timeout|ETIMEDOUT|ECONNRESET|API.?key|PERMISSION_DENIED|401|403/i.test(msg)) {
+      return { json: { ...base, check_note: '⏳ Gemini tạm lỗi, sẽ tự thử lại: ' + msg } };
+    }
+    return { json: { ...base, status: 'ERROR', check_note: '❌ Gemini không dịch được: ' + msg + ' — dịch tay bằng menu 🌐 Dịch bằng AI (web).' } };
+  }
 
-  const guardWrite = code(wf, 'Soạn ghi chú từ chối', `
-${SHARED_JS}
-const d = $json;
-return [{ json: {
-  row_number: d.row_number,
-  post_id: d.post_id,
-  status: d.status_write,
-  check_note: d.note,
-  publish_now: false,
-  last_action_at: nowIso(d.timezone),
-} }];
-`, { col: 6, row: -2 });
+  const cand = (res.candidates || [])[0] || {};
+  const parts = (cand.content && cand.content.parts) || [];
+  const text = clean(parts.filter((p) => !p.thought).map((p) => p.text || '').join(''));
+  const blocked = (res.promptFeedback && res.promptFeedback.blockReason)
+    || (/SAFETY|RECITATION|PROHIBITED|BLOCKLIST/.test(cand.finishReason || '') ? cand.finishReason : '');
+  if (!text || blocked) {
+    return { json: { ...base, status: 'ERROR', check_note: '❌ Gemini không trả bản dịch' + (blocked ? ' (bị chặn: ' + blocked + ')' : '') + ' — dịch tay bằng menu 🌐 Dịch bằng AI (web).' } };
+  }
+  const warn = cand.finishReason === 'MAX_TOKENS' ? ' ⚠️ Có thể bị cắt cụt (MAX_TOKENS) — đọc kỹ đoạn cuối.' : '';
+  return { json: {
+    ...base,
+    en_text: text.slice(0, ${MAX_CELL_CHARS}),
+    status: 'REVIEW',
+    check_note: '🤖 Gemini đã dịch ' + text.length + ' ký tự — đọc lại en_text rồi tick publish_now.' + warn,
+  } };
+});
+`, { col: 9, row: r2 });
 
-  const guardSheet = sheetsWrite(wf, 'Sheets: Ghi lý do từ chối', 'Posts', 'update', ['row_number'], { col: 7, row: -2 });
-  const respGuard = respond(
-    wf,
-    'Trả: bỏ qua',
-    '={{ { ok: false, post_id: $(\'Soạn ghi chú từ chối\').first().json.post_id, status: $(\'Soạn ghi chú từ chối\').first().json.status, message: $(\'Soạn ghi chú từ chối\').first().json.check_note } }}',
-    200,
-    { col: 8, row: -2 },
-  );
+  const writeT = sheetsWrite(wf, 'Sheets: Ghi bản dịch', 'Posts', 'update', ['row_number'], { col: 10, row: r2 });
 
-  const listFiles = http(wf, 'Drive: Liệt kê file trong folder', {
-    url: 'https://www.googleapis.com/drive/v3/files',
-    ...driveAuth(),
-    sendQuery: true,
-    queryParameters: {
-      parameters: [
-        { name: 'q', value: "={{ \"'\" + $json.folder_id + \"' in parents and trashed = false\" }}" },
-        { name: 'fields', value: 'files(id,name,mimeType,size,webViewLink,modifiedTime)' },
-        { name: 'pageSize', value: '200' },
-        { name: 'orderBy', value: 'name_natural' },
-        { name: 'supportsAllDrives', value: 'true' },
-        { name: 'includeItemsFromAllDrives', value: 'true' },
-      ],
-    },
-    options: {},
-  }, { col: 6, notes: CRED_DRIVE, alwaysOutputData: true, onError: 'continueRegularOutput' });
+  connect(wf, route, readPrompt, { fromOutput: 1 });
+  chain(wf, readPrompt, pickPrompt, readPostsT, pickT, gemini, applyT, writeT);
 
-  const validate = code(wf, 'Kiểm tra đủ thành phần', `
+  /* ------------------------------------------------ 3. Đăng (mỗi 2 phút) */
+
+  const r3 = ROW.publish;
+  const readPostsP = sheetsRead(wf, 'Sheets: Đọc Posts (đăng)', 'Posts', { col: 4, row: r3 });
+
+  // Workflow chết giữa chừng (mất mạng, n8n restart...) có thể để dòng ở POSTING mãi.
+  // KHÔNG tự đăng lại vì bài có thể đã lên Page — chỉ chuyển ERROR để bạn kiểm tra.
+  const stuck = code(wf, 'Tìm bài kẹt POSTING', `
 ${SHARED_JS}
 const cfg = $('Config').first().json;
-const meta = $('Tìm dòng bài viết').first().json;
-const body = $input.first() ? $input.first().json : {};
+const minutes = Number(cfg.stuck_posting_minutes ?? 15);
+const cutoff = nowIso(cfg.timezone, new Date(Date.now() - minutes * 60000));
+const stamp = nowIso(cfg.timezone);
+const out = [];
+$input.all().forEach((item, index) => {
+  const r = item.json || {};
+  if (String(r.status ?? '').trim().toUpperCase() !== 'POSTING') return;
+  const last = toSortable(r.last_action_at);
+  if (!last || last > cutoff) return; // không đọc được giờ => để yên, an toàn hơn
+  out.push({ json: {
+    row_number: rowNumberOf(r, index),
+    status: 'ERROR',
+    check_note: '⚠️ Kẹt ở POSTING quá ' + minutes + ' phút (lần cuối ' + last + '). Bài CÓ THỂ đã lên Page — kiểm tra Page trước khi đăng lại.',
+    publish_now: false,
+    last_action_at: stamp,
+  } });
+});
+return out;
+`, { col: 5, row: r3 + 1.5 });
+  const stuckSheet = sheetsWrite(wf, 'Sheets: Gỡ kẹt POSTING', 'Posts', 'update', ['row_number'], { col: 6, row: r3 + 1.5 });
 
+  // Mỗi lượt đăng đúng 1 bài: đơn giản, và giãn cách giữa các bài để tránh bị Facebook chặn.
+  const due = code(wf, 'Chọn bài đến hạn', `
+${SHARED_JS}
+const cfg = $('Config').first().json;
+const now = nowIso(cfg.timezone);
+const candidates = [];
+$input.all().forEach((item, index) => {
+  const r = item.json || {};
+  const postId = String(r.post_id ?? '').trim();
+  if (!postId) return;
+  const status = String(r.status ?? '').trim().toUpperCase();
+  if (['POSTED', 'POSTING', 'SKIP'].includes(status)) return;
+  const manual = isTruthy(r.publish_now);
+  // Bài hẹn giờ đã ERROR thì chỉ đăng lại khi bạn tick tay (tránh thử lại vô hạn).
+  const scheduled = toSortable(r.scheduled_at);
+  const scheduledDue = status !== 'ERROR' && scheduled !== '' && scheduled <= now;
+  if (!manual && !scheduledDue) return;
+  candidates.push({ ...r, row_number: rowNumberOf(r, index), reason: manual ? 'tick publish_now' : 'đến giờ ' + scheduled, sort: manual ? '0' : scheduled });
+});
+candidates.sort((a, b) => (a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0));
+return candidates.slice(0, 1).map(({ sort, ...r }) => ({ json: r }));
+`, { col: 5, row: r3 });
+
+  const check = code(wf, 'Kiểm tra bài', `
+${SHARED_JS}
+const cfg = $('Config').first().json;
+const r = $json;
 const minImages = Number(cfg.min_images ?? 1);
 const maxImages = Math.min(Number(cfg.max_images ?? 10), 10);
-const maxBytes = Number(cfg.max_image_mb ?? 8) * 1024 * 1024;
+const minChars = Number(cfg.min_content_chars ?? 50);
+
+const message = String(r.en_text ?? '')
+  .replace(/^\\uFEFF/, '')
+  .replace(/\\r\\n/g, '\\n')
+  .replace(/\\n{3,}/g, '\\n\\n')
+  .trim();
+const urls = String(r.source_images ?? '')
+  .split(/\\s+/)
+  .map((s) => s.trim())
+  .filter((s) => /^https?:\\/\\//i.test(s));
 
 const errors = [];
-const warnings = [];
-
-if (body && body.error) {
-  errors.push('Không đọc được folder Drive: ' + (body.error.message || JSON.stringify(body.error)) + ' (kiểm tra quyền chia sẻ folder cho credential Google của n8n)');
+if (!message) {
+  errors.push(String(r.source_text ?? '').trim()
+    ? 'Chưa có bản dịch ở en_text (chờ Gemini, hoặc menu 🌐 Dịch bằng AI).'
+    : 'Chưa có nội dung ở en_text.');
+} else if (message.length < minChars) {
+  errors.push('Nội dung quá ngắn (' + message.length + ' ký tự, cần ≥ ' + minChars + ').');
+} else if (message.length > 60000) {
+  errors.push('Nội dung quá dài (' + message.length + ' ký tự, Facebook giới hạn ~63.206).');
 }
-const files = Array.isArray(body.files) ? body.files : [];
-
-const GDOC = 'application/vnd.google-apps.document';
-const isImage = (f) => /^image\\/(jpe?g|png|gif|webp)$/i.test(String(f.mimeType || ''));
-const isTextContent = (f) => /\\.(txt|md|markdown)$/i.test(String(f.name || '')) || /^text\\//i.test(String(f.mimeType || ''));
-
-const contentFiles = files.filter((f) => f.mimeType === GDOC || isTextContent(f));
-const images = files
-  .filter(isImage)
-  .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'en', { numeric: true, sensitivity: 'base' }));
-
-if (!errors.length && !files.length) {
-  errors.push('Folder Drive rỗng (hoặc n8n chưa được chia sẻ quyền xem folder này).');
-}
-if (!contentFiles.length) {
-  errors.push('Thiếu file nội dung: cần 1 file .txt / .md hoặc Google Docs chứa bài đã dịch sang tiếng Anh.');
-}
-if (images.length < minImages) {
-  errors.push('Thiếu ảnh: cần tối thiểu ' + minImages + ' ảnh, hiện có ' + images.length + '.');
-}
-if (images.length > maxImages) {
-  errors.push('Quá nhiều ảnh: Facebook cho tối đa ' + maxImages + ' ảnh/bài, hiện có ' + images.length + '.');
-}
-const tooBig = images.filter((f) => Number(f.size || 0) > maxBytes);
-if (tooBig.length) {
-  errors.push('Ảnh vượt ' + cfg.max_image_mb + 'MB: ' + tooBig.map((f) => f.name).join(', '));
-}
-if (contentFiles.length > 1) {
-  warnings.push('Có ' + contentFiles.length + ' file nội dung, dùng file "' + contentFiles[0].name + '".');
-}
-
-const content = contentFiles[0] || null;
-const downloadUrl = content
-  ? (content.mimeType === GDOC
-      ? 'https://www.googleapis.com/drive/v3/files/' + content.id + '/export?mimeType=text%2Fplain'
-      : 'https://www.googleapis.com/drive/v3/files/' + content.id + '?alt=media&supportsAllDrives=true')
-  : '';
+if (urls.length < minImages) errors.push('Thiếu ảnh: cần tối thiểu ' + minImages + ' link ở source_images, hiện có ' + urls.length + '.');
+if (urls.length > maxImages) errors.push('Quá nhiều ảnh: Facebook cho tối đa ' + maxImages + ' ảnh/bài, hiện có ' + urls.length + '.');
 
 return [{ json: {
-  ...meta,
   ok: errors.length === 0,
   errors,
-  warnings,
-  content_file: content ? { id: content.id, name: content.name, mimeType: content.mimeType } : null,
-  content_download_url: downloadUrl,
-  images: images.map((f) => ({ id: f.id, name: f.name, mimeType: f.mimeType, size: Number(f.size || 0) })),
-  images_count: images.length,
+  post_id: String(r.post_id ?? '').trim(),
+  row_number: r.row_number,
+  reason: r.reason,
+  message,
+  content_chars: message.length,
+  images: urls.map((url, i) => ({ url, order: i + 1 })),
+  images_count: urls.length,
+  timezone: cfg.timezone,
 } }];
-`, { col: 7 });
+`, { col: 6, row: r3 });
 
-  const valid = ifNode(wf, 'Đủ thành phần?', [isTrue('={{ $json.ok }}')], { col: 8 });
+  const okIf = ifNode(wf, 'Đủ điều kiện đăng?', [isTrue('={{ $json.ok }}')], { col: 7, row: r3 });
 
   const invalidWrite = code(wf, 'Soạn ghi chú lỗi', `
 ${SHARED_JS}
 const d = $json;
 return [{ json: {
   row_number: d.row_number,
-  post_id: d.post_id,
   status: 'ERROR',
   images_count: d.images_count,
   check_note: '❌ ' + d.errors.join(' | '),
   publish_now: false,
   last_action_at: nowIso(d.timezone),
 } }];
-`, { col: 9, row: 2 });
-
-  const invalidSheet = sheetsWrite(wf, 'Sheets: Ghi lỗi kiểm tra', 'Posts', 'update', ['row_number'], { col: 10, row: 2 });
-  const respInvalid = respond(
-    wf,
-    'Trả: thiếu thành phần',
-    '={{ { ok: false, post_id: $(\'Soạn ghi chú lỗi\').first().json.post_id, status: "ERROR", message: $(\'Soạn ghi chú lỗi\').first().json.check_note } }}',
-    422,
-    { col: 11, row: 2 },
-  );
-
-  const downloadContent = http(wf, 'Drive: Tải file nội dung', {
-    url: '={{ $json.content_download_url }}',
-    ...driveAuth(),
-    options: { response: { response: { responseFormat: 'file', outputPropertyName: 'data' } } },
-  }, { col: 9, notes: CRED_DRIVE });
-
-  const extract = node(wf, {
-    name: 'Đọc text từ file',
-    type: 'n8n-nodes-base.extractFromFile',
-    typeVersion: 1,
-    col: 10,
-    parameters: { operation: 'text', binaryPropertyName: 'data', destinationKey: 'content_text', options: {} },
-  });
-
-  const parse = code(wf, 'Chuẩn hoá nội dung', `
-${SHARED_JS}
-const cfg = $('Config').first().json;
-const meta = $('Kiểm tra đủ thành phần').first().json;
-let text = String($json.content_text ?? '');
-
-text = text.replace(/^\\uFEFF/, '').replace(/\\r\\n/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();
-// Bỏ dòng tiêu đề markdown ở đầu nếu nó trùng tiêu đề trong sheet.
-const lines = text.split('\\n');
-if (lines.length > 1 && /^#{1,3}\\s+/.test(lines[0])) {
-  const h = lines[0].replace(/^#{1,3}\\s+/, '').trim();
-  text = (h ? h + '\\n\\n' : '') + lines.slice(1).join('\\n').trim();
-}
-
-const minChars = Number(cfg.min_content_chars ?? 50);
-const errors = [];
-if (!text) errors.push('File nội dung rỗng.');
-else if (text.length < minChars) errors.push('Nội dung quá ngắn (' + text.length + ' ký tự, cần ≥ ' + minChars + ').');
-if (text.length > 60000) errors.push('Nội dung quá dài (' + text.length + ' ký tự, Facebook giới hạn ~63.206).');
-
-return [{ json: {
-  ...meta,
-  ok: errors.length === 0,
-  errors: [...meta.errors, ...errors],
-  message: text,
-  content_chars: text.length,
-} }];
-`, { col: 11 });
-
-  const contentOk = ifNode(wf, 'Nội dung hợp lệ?', [isTrue('={{ $json.ok }}')], { col: 12 });
-
-  const isPublish = ifNode(wf, 'Hành động = đăng?', [eq('={{ $json.action }}', 'publish')], { col: 13 });
-
-  const readyWrite = code(wf, 'Soạn ghi chú READY', `
-${SHARED_JS}
-const d = $json;
-const warn = d.warnings && d.warnings.length ? ' ⚠️ ' + d.warnings.join(' | ') : '';
-return [{ json: {
-  row_number: d.row_number,
-  post_id: d.post_id,
-  status: 'READY',
-  images_count: d.images_count,
-  content_chars: d.content_chars,
-  check_note: '✅ Đủ thành phần: ' + d.content_chars + ' ký tự nội dung + ' + d.images_count + ' ảnh.' + warn,
-  last_action_at: nowIso(d.timezone),
-} }];
-`, { col: 14, row: -2 });
-
-  const readySheet = sheetsWrite(wf, 'Sheets: Ghi READY', 'Posts', 'update', ['row_number'], { col: 15, row: -2 });
-  const respReady = respond(
-    wf,
-    'Trả: đủ điều kiện',
-    '={{ { ok: true, action: "check", post_id: $(\'Soạn ghi chú READY\').first().json.post_id, status: "READY", images: $(\'Soạn ghi chú READY\').first().json.images_count, content_chars: $(\'Soạn ghi chú READY\').first().json.content_chars, message: $(\'Soạn ghi chú READY\').first().json.check_note } }}',
-    200,
-    { col: 16, row: -2 },
-  );
+`, { col: 8, row: r3 + 1 });
+  const invalidSheet = sheetsWrite(wf, 'Sheets: Ghi lỗi kiểm tra', 'Posts', 'update', ['row_number'], { col: 9, row: r3 + 1 });
 
   const postingWrite = code(wf, 'Soạn trạng thái POSTING', `
 ${SHARED_JS}
-const d = $('Chuẩn hoá nội dung').first().json;
+const d = $json;
 return [{ json: {
   row_number: d.row_number,
-  post_id: d.post_id,
   status: 'POSTING',
   images_count: d.images_count,
-  content_chars: d.content_chars,
-  check_note: '⏳ Đang đăng lên Facebook...',
+  check_note: '⏳ Đang đăng lên Facebook (' + d.reason + ')...',
   publish_now: false,
   last_action_at: nowIso(d.timezone),
 } }];
-`, { col: 14 });
+`, { col: 8, row: r3 });
+  const postingSheet = sheetsWrite(wf, 'Sheets: Ghi POSTING', 'Posts', 'update', ['row_number'], { col: 9, row: r3 });
 
-  const postingSheet = sheetsWrite(wf, 'Sheets: Ghi POSTING', 'Posts', 'update', ['row_number'], { col: 15 });
+  const hasImages = ifNode(wf, 'Có ảnh?', [gt("={{ $('Kiểm tra bài').first().json.images_count }}", 0)], { col: 10, row: r3 });
 
-  const hasImages = ifNode(wf, 'Có ảnh?', [gt("={{ $('Chuẩn hoá nội dung').first().json.images_count }}", 0)], { col: 16 });
+  const split = code(wf, 'Tách từng ảnh', `
+return $('Kiểm tra bài').first().json.images.map((img) => ({ json: img }));
+`, { col: 11, row: r3 - 0.7 });
 
-  const splitImages = code(wf, 'Tách từng ảnh', `
-const d = $('Chuẩn hoá nội dung').first().json;
-return d.images.map((img, i) => ({ json: { ...img, order: i + 1 } }));
-`, { col: 17 });
+  // Lỗi tải ảnh không được làm workflow dừng giữa chừng (sẽ kẹt POSTING):
+  // cho đi tiếp, "Soạn payload bài đăng" đếm thiếu ảnh và huỷ đăng.
+  const download = http(wf, 'Tải ảnh gốc', {
+    url: '={{ $json.url }}',
+    options: { response: { response: { responseFormat: 'file', outputPropertyName: 'data' } }, timeout: 60000 },
+  }, { col: 12, row: r3 - 0.7, onError: 'continueRegularOutput' });
 
-  const downloadImage = http(wf, 'Drive: Tải ảnh', {
-    url: '=https://www.googleapis.com/drive/v3/files/{{ $json.id }}?alt=media&supportsAllDrives=true',
-    ...driveAuth(),
-    options: { response: { response: { responseFormat: 'file', outputPropertyName: 'data' } } },
-  }, { col: 18, notes: CRED_DRIVE });
-
-  const uploadPhoto = http(wf, 'FB: Upload ảnh (chưa publish)', {
+  const upload = http(wf, 'FB: Upload ảnh (chưa publish)', {
     method: 'POST',
-    url: "=https://graph.facebook.com/{{ $('Config').first().json.graph_version }}/{{ $('Config').first().json.page_id }}/photos",
+    url: `=https://graph.facebook.com/{{ ${cfgExpr('graph_version')} }}/{{ ${cfgExpr('page_id')} }}/photos`,
     ...fbAuth(),
     sendBody: true,
     contentType: 'multipart-form-data',
@@ -773,19 +725,34 @@ return d.images.map((img, i) => ({ json: { ...img, order: i + 1 } }));
       ],
     },
     options: {},
-  }, { col: 19, notes: CRED_FB, onError: 'continueErrorOutput' });
+  }, { col: 13, row: r3 - 0.7, notes: CRED_FB, onError: 'continueRegularOutput' });
 
-  const buildPayload = code(wf, 'Soạn payload bài đăng', `
-const cfg = $('Config').first().json;
-const d = $('Chuẩn hoá nội dung').first().json;
-let media = [];
-try {
-  media = $('FB: Upload ảnh (chưa publish)').all()
-    .map((i) => i.json && i.json.id)
-    .filter(Boolean);
-} catch (e) {
-  media = [];
+  // Lỗi upload đi theo output thường để chỉ có MỘT chỗ quyết định huỷ đăng.
+  const payload = code(wf, 'Soạn payload bài đăng', `
+${SHARED_JS}
+const d = $('Kiểm tra bài').first().json;
+const safeAll = (name) => {
+  if (!d.images_count) return []; // bài không ảnh: không đọc dữ liệu node ảnh
+  try {
+    return $(name).all();
+  } catch (e) {
+    return [];
+  }
+};
+const uploads = safeAll('FB: Upload ảnh (chưa publish)').map((i) => i.json || {});
+const media = uploads.map((r) => r.id).filter(Boolean);
+
+const problems = [];
+safeAll('Tải ảnh gốc').forEach((it, i) => {
+  const e = it.json && it.json.error;
+  if (e) problems.push('tải ảnh ' + (i + 1) + ' lỗi: ' + errMsg(e) + ' (link ảnh Facebook chỉ sống vài ngày — lấy lại link mới)');
+});
+if (!problems.length) {
+  uploads.forEach((r, i) => {
+    if (!r.id) problems.push('upload ảnh ' + (i + 1) + ' lỗi: ' + errMsg(r.error));
+  });
 }
+
 const payload = { message: d.message };
 if (media.length) payload.attached_media = media.map((id) => ({ media_fbid: String(id) }));
 const enough = media.length === Number(d.images_count);
@@ -794,221 +761,112 @@ return [{ json: {
   media_ids: media,
   payload,
   upload_ok: enough,
-  error: enough ? undefined : { message: 'Chỉ upload được ' + media.length + '/' + d.images_count + ' ảnh lên Facebook, huỷ đăng để tránh bài thiếu ảnh.' },
+  error: enough ? undefined : {
+    message: 'Chỉ upload được ' + media.length + '/' + d.images_count + ' ảnh lên Facebook, huỷ đăng để tránh bài thiếu ảnh.'
+      + (problems.length ? ' ' + problems.slice(0, 3).join(' | ') : ''),
+  },
 } }];
-`, { col: 20 });
+`, { col: 14, row: r3 });
 
-  const uploadOk = ifNode(wf, 'Upload đủ ảnh?', [isTrue('={{ $json.upload_ok }}')], { col: 20, row: 1 });
+  const uploadOk = ifNode(wf, 'Upload đủ ảnh?', [isTrue('={{ $json.upload_ok }}')], { col: 15, row: r3 });
 
   const createPost = http(wf, 'FB: Tạo bài trên Page', {
     method: 'POST',
-    url: "=https://graph.facebook.com/{{ $('Config').first().json.graph_version }}/{{ $('Config').first().json.page_id }}/feed",
+    url: `=https://graph.facebook.com/{{ ${cfgExpr('graph_version')} }}/{{ ${cfgExpr('page_id')} }}/feed`,
     ...fbAuth(),
     sendBody: true,
     specifyBody: 'json',
     jsonBody: '={{ JSON.stringify($json.payload) }}',
     options: {},
-  }, { col: 21, notes: CRED_FB, onError: 'continueErrorOutput' });
+  }, { col: 16, row: r3, notes: CRED_FB, onError: 'continueErrorOutput' });
 
   const permalink = http(wf, 'FB: Lấy permalink', {
-    url: "=https://graph.facebook.com/{{ $('Config').first().json.graph_version }}/{{ $json.id }}",
+    url: `=https://graph.facebook.com/{{ ${cfgExpr('graph_version')} }}/{{ $json.id }}`,
     ...fbAuth(),
     sendQuery: true,
-    queryParameters: { parameters: [{ name: 'fields', value: 'permalink_url,created_time' }] },
+    queryParameters: { parameters: [{ name: 'fields', value: 'permalink_url' }] },
     options: {},
-  }, { col: 22, notes: CRED_FB, onError: 'continueRegularOutput' });
+  }, { col: 17, row: r3, notes: CRED_FB, onError: 'continueRegularOutput' });
 
   const postedWrite = code(wf, 'Soạn trạng thái POSTED', `
 ${SHARED_JS}
-const d = $('Soạn payload bài đăng').first().json;
+const d = $('Kiểm tra bài').first().json;
 const created = $('FB: Tạo bài trên Page').first().json || {};
 const info = $json || {};
 const fbId = String(created.id || info.id || '');
-const permalink = info.permalink_url || (fbId ? 'https://www.facebook.com/' + fbId.replace('_', '/posts/') : '');
+const link = info.permalink_url || (fbId ? 'https://www.facebook.com/' + fbId.replace('_', '/posts/') : '');
 return [{ json: {
   row_number: d.row_number,
-  post_id: d.post_id,
   status: 'POSTED',
   images_count: d.images_count,
-  content_chars: d.content_chars,
   check_note: '✅ Đã đăng ' + d.images_count + ' ảnh + ' + d.content_chars + ' ký tự.',
   posted_at: nowIso(d.timezone),
   fb_post_id: fbId,
-  fb_permalink: permalink,
+  fb_permalink: link,
   publish_now: false,
   last_action_at: nowIso(d.timezone),
 } }];
-`, { col: 23 });
+`, { col: 18, row: r3 });
+  const postedSheet = sheetsWrite(wf, 'Sheets: Ghi POSTED', 'Posts', 'update', ['row_number'], { col: 19, row: r3 });
 
-  const postedSheet = sheetsWrite(wf, 'Sheets: Ghi POSTED', 'Posts', 'update', ['row_number'], { col: 24 });
-  const respPosted = respond(
-    wf,
-    'Trả: đã đăng',
-    '={{ { ok: true, action: "publish", post_id: $(\'Soạn trạng thái POSTED\').first().json.post_id, status: "POSTED", fb_post_id: $(\'Soạn trạng thái POSTED\').first().json.fb_post_id, permalink: $(\'Soạn trạng thái POSTED\').first().json.fb_permalink } }}',
-  );
-  wf.nodes.find((n) => n.name === respPosted).position = [260 + 25 * 240, 300];
-
-  const fbErrWrite = code(wf, 'Soạn lỗi Facebook', `
+  const fbErr = code(wf, 'Soạn lỗi Facebook', `
 ${SHARED_JS}
-const d = $('Chuẩn hoá nội dung').first().json;
+const d = $('Kiểm tra bài').first().json;
 const err = $json || {};
 const detail = (err.error && (err.error.message || err.error.error_user_msg))
   || err.message
   || (typeof err === 'string' ? err : JSON.stringify(err).slice(0, 400));
 return [{ json: {
   row_number: d.row_number,
-  post_id: d.post_id,
   status: 'ERROR',
   images_count: d.images_count,
-  content_chars: d.content_chars,
   check_note: '❌ Facebook từ chối: ' + detail,
   publish_now: false,
   last_action_at: nowIso(d.timezone),
 } }];
-`, { col: 21, row: 3 });
+`, { col: 17, row: r3 + 1.5 });
+  const fbErrSheet = sheetsWrite(wf, 'Sheets: Ghi lỗi Facebook', 'Posts', 'update', ['row_number'], { col: 18, row: r3 + 1.5 });
 
-  const fbErrSheet = sheetsWrite(wf, 'Sheets: Ghi lỗi Facebook', 'Posts', 'update', ['row_number'], { col: 22, row: 3 });
-  const respFbErr = respond(
-    wf,
-    'Trả: lỗi Facebook',
-    '={{ { ok: false, action: "publish", post_id: $(\'Soạn lỗi Facebook\').first().json.post_id, status: "ERROR", message: $(\'Soạn lỗi Facebook\').first().json.check_note } }}',
-    502,
-    { col: 23, row: 3 },
-  );
-
-  connect(wf, hook, config);
-  connect(wf, config, auth);
-  connect(wf, auth, readPosts, { fromOutput: 0 });
-  connect(wf, auth, resp401, { fromOutput: 1 });
-  chain(wf, readPosts, findRow, guard);
-  connect(wf, guard, listFiles, { fromOutput: 0 });
-  connect(wf, guard, guardWrite, { fromOutput: 1 });
-  chain(wf, guardWrite, guardSheet, respGuard);
-  chain(wf, listFiles, validate, valid);
-  connect(wf, valid, downloadContent, { fromOutput: 0 });
-  connect(wf, valid, invalidWrite, { fromOutput: 1 });
-  chain(wf, invalidWrite, invalidSheet, respInvalid);
-  chain(wf, downloadContent, extract, parse, contentOk);
-  connect(wf, contentOk, isPublish, { fromOutput: 0 });
-  connect(wf, contentOk, invalidWrite, { fromOutput: 1 });
-  connect(wf, isPublish, postingWrite, { fromOutput: 0 });
-  connect(wf, isPublish, readyWrite, { fromOutput: 1 });
-  chain(wf, readyWrite, readySheet, respReady);
+  connect(wf, route, readPostsP, { fromOutput: 2 });
+  chain(wf, readPostsP, stuck, stuckSheet);
+  chain(wf, readPostsP, due, check, okIf);
+  connect(wf, okIf, postingWrite, { fromOutput: 0 });
+  connect(wf, okIf, invalidWrite, { fromOutput: 1 });
+  chain(wf, invalidWrite, invalidSheet);
   chain(wf, postingWrite, postingSheet, hasImages);
-  connect(wf, hasImages, splitImages, { fromOutput: 0 });
-  connect(wf, hasImages, buildPayload, { fromOutput: 1 });
-  chain(wf, splitImages, downloadImage, uploadPhoto);
-  connect(wf, uploadPhoto, buildPayload, { fromOutput: 0 });
-  connect(wf, uploadPhoto, fbErrWrite, { fromOutput: 1 });
-  chain(wf, buildPayload, uploadOk);
+  connect(wf, hasImages, split, { fromOutput: 0 });
+  connect(wf, hasImages, payload, { fromOutput: 1 });
+  chain(wf, split, download, upload, payload, uploadOk);
   connect(wf, uploadOk, createPost, { fromOutput: 0 });
-  connect(wf, uploadOk, fbErrWrite, { fromOutput: 1 });
+  connect(wf, uploadOk, fbErr, { fromOutput: 1 });
   connect(wf, createPost, permalink, { fromOutput: 0 });
-  connect(wf, createPost, fbErrWrite, { fromOutput: 1 });
-  chain(wf, permalink, postedWrite, postedSheet, respPosted);
-  chain(wf, fbErrWrite, fbErrSheet, respFbErr);
+  connect(wf, createPost, fbErr, { fromOutput: 1 });
+  chain(wf, permalink, postedWrite, postedSheet);
+  chain(wf, fbErr, fbErrSheet);
 
-  return wf;
-}
-
-/* ------------------------- workflow 03: hàng đợi tick ô "Đăng" + đặt lịch */
-
-function buildScheduler() {
-  const wf = workflow('AutoPost 03 - Hang doi dang bai');
-
-  const trigger = node(wf, {
-    name: 'Mỗi 5 phút',
-    type: 'n8n-nodes-base.scheduleTrigger',
-    typeVersion: 1.2,
-    col: 0,
-    parameters: { rule: { interval: [{ field: 'minutes', minutesInterval: 5 }] } },
-  });
-
-  const config = node(wf, {
-    name: 'Config',
-    type: 'n8n-nodes-base.set',
-    typeVersion: 3.4,
-    col: 1,
-    notes: 'SỬA Ở ĐÂY: sheet_id, publish_url (webhook của workflow 02), webhook_secret',
-    notesInFlow: true,
-    parameters: {
-      assignments: {
-        assignments: [
-          { id: 'a1', name: 'sheet_id', value: 'DAN_GOOGLE_SHEET_ID_VAO_DAY', type: 'string' },
-          { id: 'a2', name: 'publish_url', value: 'https://N8N_CUA_BAN/webhook/autopost-publish', type: 'string' },
-          { id: 'a3', name: 'webhook_secret', value: 'DOI_THANH_CHUOI_BI_MAT_RIENG', type: 'string' },
-          { id: 'a4', name: 'timezone', value: 'Asia/Ho_Chi_Minh', type: 'string' },
-          { id: 'a5', name: 'max_per_run', value: 3, type: 'number' },
-        ],
-      },
-      options: {},
-    },
-  });
-
-  const readPosts = sheetsRead(wf, 'Sheets: Đọc Posts', 'Posts', { col: 2 });
-
-  const due = code(wf, 'Chọn bài đến hạn', `
-${SHARED_JS}
-const cfg = $('Config').first().json;
-const limit = Number(cfg.max_per_run ?? 3);
-const tz = cfg.timezone;
-const now = nowIso(tz);
-
-const picked = [];
-$input.all().forEach((item, index) => {
-  const r = item.json || {};
-  if (!Object.keys(r).length) return;
-  const postId = String(r.post_id ?? '').trim();
-  if (!postId) return;
-  const status = String(r.status ?? '').trim().toUpperCase();
-  if (['POSTED', 'POSTING', 'SKIP'].includes(status)) return;
-
-  const manual = isTruthy(r.publish_now);
-  const scheduledRaw = String(r.scheduled_at ?? '').trim();
-  let scheduledDue = false;
-  if (scheduledRaw) {
-    // Hỗ trợ "2026-01-31 08:30" hoặc ISO; so sánh dạng chuỗi theo cùng múi giờ.
-    const norm = scheduledRaw.replace('T', ' ').slice(0, 19);
-    scheduledDue = norm <= now;
-  }
-  if (!manual && !scheduledDue) return;
-
-  picked.push({ json: {
-    post_id: postId,
-    row_number: rowNumberOf(r, index),
-    reason: manual ? 'tick ô publish_now' : 'đến hạn ' + scheduledRaw,
-    secret: cfg.webhook_secret,
-    action: 'publish',
-    publish_url: cfg.publish_url,
-  } });
-});
-return picked.slice(0, limit);
-`, { col: 3 });
-
-  const call = http(wf, 'Gọi webhook đăng bài', {
-    method: 'POST',
-    url: '={{ $json.publish_url }}',
-    sendBody: true,
-    specifyBody: 'json',
-    jsonBody: '={{ JSON.stringify({ post_id: $json.post_id, row_number: $json.row_number, action: "publish", secret: $json.secret }) }}',
-    options: { batching: { batch: { batchSize: 1, batchInterval: 4000 } }, timeout: 180000 },
-  }, { col: 4, onError: 'continueRegularOutput' });
-
-  chain(wf, trigger, config, readPosts, due, call);
   return wf;
 }
 
 /* -------------------------------------------------------------------- build */
 
-const files = [
-  ['01-collect-source-posts.json', buildCollect()],
-  ['02-check-and-publish.json', buildPublish()],
-  ['03-publish-queue.json', buildScheduler()],
-];
+function write(dir, values) {
+  const wf = buildAutopost(values);
+  mkdirSync(dir, { recursive: true });
+  writeFileSync(join(dir, OUT_FILE), `${JSON.stringify(wf, null, 2)}\n`, 'utf8');
+  console.log(`✔ ${join(dir.slice(ROOT.length + 1), OUT_FILE)} — ${wf.nodes.length} node`);
+}
 
-mkdirSync(OUT_DIR, { recursive: true });
-for (const [file, wf] of files) {
-  delete wf.__cursor;
-  writeFileSync(join(OUT_DIR, file), `${JSON.stringify(wf, null, 2)}\n`, 'utf8');
-  console.log(`✔ ${file} — ${wf.nodes.length} node`);
+write(OUT_DIR, PLACEHOLDERS);
+
+const env = readEnv();
+const local = {
+  sheet_id: env.N8N_SHEET_ID || PLACEHOLDERS.sheet_id,
+  page_id: env.FB_PAGE_ID || PLACEHOLDERS.page_id,
+  crawler_token: env.CRAWLER_TOKEN || PLACEHOLDERS.crawler_token,
+};
+const missing = Object.keys(local).filter((k) => local[k] === PLACEHOLDERS[k]);
+if (missing.length < Object.keys(local).length) {
+  write(LOCAL_DIR, local);
+  console.log(`  → import n8n/local/${OUT_FILE} (đã điền từ .env, không commit).`);
+  if (missing.length) console.log(`  ⚠ .env còn thiếu: ${missing.join(', ')} — các ô này vẫn là placeholder.`);
 }

@@ -2,7 +2,7 @@
   "name": "autopostblog",
   "version": "1.0.0",
   "private": true,
-  "description": "Auto đăng bài lên Facebook Page bằng n8n + Google Sheet + Google Drive",
+  "description": "Reup bài Facebook: crawler + Gemini dịch + duyệt trên Google Sheet + đăng qua n8n",
   "type": "module",
   "engines": {
     "node": ">=18"
@@ -11,7 +11,8 @@
     "build": "node tools/build-workflows.mjs",
     "validate": "node tools/validate-workflows.mjs",
     "check:fb": "node tools/check-facebook.mjs",
-    "test": "node tools/build-workflows.mjs && node tools/validate-workflows.mjs && node tools/test-logic.mjs",
-    "test:logic": "node tools/test-logic.mjs"
+    "test": "node tools/build-workflows.mjs && node tools/validate-workflows.mjs && node tools/test-logic.mjs && npm run --silent test:crawler",
+    "test:logic": "node tools/test-logic.mjs",
+    "test:crawler": "python3 -m unittest discover -s crawler -p \"test_*.py\""
   }
 }

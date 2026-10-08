@@ -25,7 +25,6 @@ gọi `me/accounts` ở bước dưới, ID hiện ngay trong kết quả.
    - `pages_show_list`
    - `pages_read_engagement`
    - `pages_manage_posts`  ← bắt buộc để đăng bài
-   - `pages_read_user_content` (nếu muốn workflow 01 đọc feed page của chính bạn)
 5. **Generate Access Token** → đăng nhập, chọn Page cần dùng, cấp đủ quyền.
 6. Gọi `GET /me/accounts` → copy `access_token` của đúng Page trong danh sách.
    Đây là **Page Access Token** (nhưng đang short-lived, ~1-2 giờ).
@@ -64,25 +63,18 @@ Muốn thử đăng thật (bài chế độ **SELF** — chỉ admin Page thấ
 npm run check:fb -- --post
 ```
 
-## 6. App Review — khi nào cần?
+## 6. App Review — có cần không?
 
-| Việc bạn làm | Cần App Review? |
-| --- | --- |
-| Đăng bài lên **Page bạn quản trị** | **Không.** Admin/Editor của page dùng được `pages_manage_posts` ở chế độ Development. |
-| Workflow 01 đọc feed **page của chính bạn** | Không. |
-| Workflow 01 đọc feed **page của người khác** | **Có** — cần *Page Public Content Access*, Facebook xét rất khắt khe. |
-
-Vì hạn chế cuối, với page nguồn của người khác nên dùng một trong các cách sau
-trong sheet `Sources`:
-
-- `mode = rss` + `feed_url`: nếu nguồn có RSS (blog, báo, hoặc dịch vụ chuyển
-  Facebook → RSS mà bạn tự tin dùng);
-- hoặc dán tay link bài vào cột `source_post_url` của sheet `Posts` và đặt
-  `status = NEED_CONTENT` — phần còn lại của hệ thống chạy y như cũ.
+**Không.** Đăng bài lên **Page bạn quản trị** dùng được `pages_manage_posts` ngay ở
+chế độ Development của app. Bài của page nguồn do crawler đọc (docs/03), không
+dùng Graph API nên không cần quyền *Page Public Content Access*.
 
 ## 7. Giới hạn kỹ thuật cần nhớ
 
 - Một bài tối đa **10 ảnh** (`attached_media`).
 - Nội dung tối đa ~63.206 ký tự (workflow chặn ở 60.000 để chắc).
-- Rate limit Page: đăng dồn dập dễ bị chặn tạm thời → workflow 03 giãn 4 giây/bài
-  và mặc định tối đa 3 bài mỗi lần quét.
+- Rate limit Page: đăng dồn dập dễ bị chặn tạm thời → workflow chỉ đăng **1 bài mỗi
+  2 phút**, tick nhiều bài thì chúng lần lượt lên.
+
+Có token rồi: trong n8n tạo credential **Facebook Graph API**, dán token vào
+(xem [docs/03](03-n8n-va-crawler.md)).

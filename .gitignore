@@ -2,3 +2,10 @@
 node_modules/
 .DS_Store
 *.log
+n8n/local/
+crawler/secrets/*
+!crawler/secrets/.gitkeep
+__pycache__/
+crawler/downloaded_files/
+docker-compose.override.yml
+backups/

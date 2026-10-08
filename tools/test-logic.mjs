@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
- * Chạy thật JavaScript bên trong các node Code của workflow 02 với dữ liệu giả,
- * để chắc chắn phần "kiểm tra đủ thành phần" xử lý đúng các tình huống.
+ * Chạy thật JavaScript bên trong các node Code của workflow AutoPost với dữ liệu
+ * giả, để chắc chắn từng bước xử lý đúng các tình huống.
  *
  *   node tools/test-logic.mjs
  */
@@ -13,7 +13,7 @@ import vm from 'node:vm';
 import assert from 'node:assert/strict';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
-const wf = JSON.parse(readFileSync(join(ROOT, 'n8n', 'workflows', '02-check-and-publish.json'), 'utf8'));
+const wf = JSON.parse(readFileSync(join(ROOT, 'n8n', 'workflows', 'autopost.json'), 'utf8'));
 
 // vm tạo realm riêng nên object trả về khác prototype => so sánh sau khi JSON hoá.
 const plain = (v) => JSON.parse(JSON.stringify(v));
@@ -27,18 +27,11 @@ const codeOf = (nodeName) => {
 
 /**
  * Giả lập môi trường Code node của n8n.
- * nodes: { 'Tên node': [ {json}, ... ] }  — dữ liệu output của các node trước.
+ * nodes: { 'Tên node': [ {json}, ... ] } — output của các node trước.
+ * Trả về mảng item đã JSON hoá.
  */
 function runNode(nodeName, { input = [], nodes = {} } = {}) {
-  const wrap = (items) => ({
-    all: () => items,
-    first: () => items[0],
-    get item() {
-      if (!items.length) throw new Error('pairedItem không xác định');
-      return items[0];
-    },
-  });
-
+  const wrap = (items) => ({ all: () => items, first: () => items[0] });
   const sandbox = {
     $input: wrap(input),
     $json: input.length ? input[0].json : {},
@@ -47,342 +40,361 @@ function runNode(nodeName, { input = [], nodes = {} } = {}) {
       return wrap(nodes[name]);
     },
     Intl,
-    Buffer,
     console: { log() {} },
   };
-
   const script = new vm.Script(`(function () {\n${codeOf(nodeName)}\n})()`);
-  return script.runInNewContext(sandbox, { timeout: 5000 });
+  return plain(script.runInNewContext(sandbox, { timeout: 5000 })).map((i) => i.json);
 }
 
-const CONFIG = {
-  sheet_id: 'sheet-1',
-  page_id: '999',
-  webhook_secret: 's3cret',
-  graph_version: 'v21.0',
-  timezone: 'Asia/Ho_Chi_Minh',
-  min_images: 1,
-  max_images: 10,
-  max_image_mb: 8,
-  min_content_chars: 50,
-};
-
-const META = {
-  action: 'publish',
-  post_id: 'AP-0001',
-  row_number: 7,
-  status_before: 'NEED_CONTENT',
-  title: 'Bài thử',
-  drive_folder_url: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz123456',
-  folder_id: '1AbCdEfGhIjKlMnOpQrStUvWxYz123456',
-  timezone: CONFIG.timezone,
-  ok: true,
-  errors: [],
-};
-
-const img = (name, size = 500000) => ({ id: `img-${name}`, name, mimeType: 'image/jpeg', size: String(size) });
-const GDOC = { id: 'doc-1', name: 'content', mimeType: 'application/vnd.google-apps.document' };
-const MD = { id: 'md-1', name: 'content.md', mimeType: 'text/markdown', size: '2000' };
-
-const validate = (files, cfgOverride = {}) =>
-  runNode('Kiểm tra đủ thành phần', {
-    input: [{ json: files === null ? { error: { message: 'File not found' } } : { files } }],
-    nodes: { Config: [{ json: { ...CONFIG, ...cfgOverride } }], 'Tìm dòng bài viết': [{ json: META }] },
-  })[0].json;
-
-/* ------------------------------------------------------------------- tests */
+const configNode = wf.nodes.find((n) => n.name === 'Config');
+const CONFIG = Object.fromEntries(configNode.parameters.assignments.assignments.map((a) => [a.name, a.value]));
+const cfg = (over = {}) => [{ json: { ...CONFIG, ...over } }];
+const items = (rows) => rows.map((json) => ({ json }));
 
 const tests = [];
 const test = (name, fn) => tests.push([name, fn]);
 
-test('đủ nội dung + ảnh => ok', () => {
-  const r = validate([MD, img('02-b.jpg'), img('01-a.jpg')]);
-  assert.equal(r.ok, true);
-  assert.deepEqual(plain(r.errors), []);
-  assert.equal(r.images_count, 2);
-  // ảnh phải được sắp theo tên file
-  assert.deepEqual(plain(r.images).map((i) => i.name), ['01-a.jpg', '02-b.jpg']);
-  assert.match(r.content_download_url, /files\/md-1\?alt=media/);
+/* ------------------------------------------------------------- cấu trúc */
+
+test('một workflow, 3 lịch chạy, không còn webhook / Drive', () => {
+  const types = wf.nodes.map((n) => n.type);
+  assert.equal(types.filter((t) => t === 'n8n-nodes-base.scheduleTrigger').length, 3);
+  assert.ok(!types.includes('n8n-nodes-base.webhook'));
+  assert.ok(!JSON.stringify(wf).includes('googleDriveOAuth2Api'));
 });
 
-test('sắp ảnh hiểu số: 2.jpg trước 10.jpg', () => {
-  const r = validate([MD, img('10.jpg'), img('2.jpg'), img('1.jpg')]);
-  assert.deepEqual(plain(r.images).map((i) => i.name), ['1.jpg', '2.jpg', '10.jpg']);
+test('Chọn việc: mỗi lịch đi đúng một nhánh', () => {
+  const route = wf.connections['Chọn việc'].main.map((out) => out[0].node);
+  assert.deepEqual(route, ['Sheets: Đọc Posts (thu)', 'Sheets: Đọc Prompt', 'Sheets: Đọc Posts (đăng)']);
+  const keys = wf.nodes.find((n) => n.name === 'Chọn việc').parameters.rules.values.map((v) => v.conditions.conditions[0].rightValue);
+  assert.deepEqual(keys, ['collect', 'translate', 'publish']);
 });
 
-test('Google Docs => dùng URL export text/plain', () => {
-  const r = validate([GDOC, img('a.png')]);
-  assert.equal(r.ok, true);
-  assert.match(r.content_download_url, /files\/doc-1\/export\?mimeType=text%2Fplain/);
-});
+/* ------------------------------------------------------------- 1. thu bài */
 
-test('thiếu file nội dung => lỗi', () => {
-  const r = validate([img('a.jpg')]);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('Thiếu file nội dung')), r.errors.join('|'));
-});
+const SOURCES = [
+  { json: { source_name: 'Page A', page: 'https://www.facebook.com/a', max_posts: 5 } },
+  { json: { source_name: 'Page B', page: 'https://www.facebook.com/b', max_posts: 5 } },
+];
 
-test('không có ảnh => lỗi', () => {
-  const r = validate([MD]);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('Thiếu ảnh')), r.errors.join('|'));
-});
-
-test('min_images = 0 cho phép bài không ảnh', () => {
-  const r = validate([MD], { min_images: 0 });
-  assert.equal(r.ok, true);
-  assert.equal(r.images_count, 0);
-});
-
-test('quá 10 ảnh => lỗi', () => {
-  const files = [MD, ...Array.from({ length: 11 }, (_, i) => img(`${i}.jpg`))];
-  const r = validate(files);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('Quá nhiều ảnh')), r.errors.join('|'));
-});
-
-test('ảnh quá dung lượng => lỗi có tên file', () => {
-  const r = validate([MD, img('to-bu.jpg', 9 * 1024 * 1024)]);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('to-bu.jpg')), r.errors.join('|'));
-});
-
-test('bỏ qua file lạ (pdf, docx, heic)', () => {
-  const r = validate([
-    MD,
-    img('a.jpg'),
-    { id: 'x', name: 'goc.pdf', mimeType: 'application/pdf', size: '1000' },
-    { id: 'y', name: 'anh.heic', mimeType: 'image/heic', size: '1000' },
-  ]);
-  assert.equal(r.ok, true);
-  assert.equal(r.images_count, 1, 'heic không được tính là ảnh hợp lệ');
-});
-
-test('folder rỗng => lỗi có gợi ý quyền', () => {
-  const r = validate([]);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('rỗng')), r.errors.join('|'));
-});
-
-test('Drive trả lỗi => báo lỗi quyền', () => {
-  const r = validate(null);
-  assert.equal(r.ok, false);
-  assert.ok(r.errors[0].includes('Không đọc được folder Drive'), r.errors.join('|'));
-});
-
-test('nhiều file nội dung => cảnh báo, vẫn chạy', () => {
-  const r = validate([MD, { id: 'md-2', name: 'zz.txt', mimeType: 'text/plain', size: '10' }, img('a.jpg')]);
-  assert.equal(r.ok, true);
-  assert.equal(r.warnings.length, 1);
-  assert.equal(r.content_file.id, 'md-1');
-});
-
-/* --- Tìm dòng bài viết ---------------------------------------------------- */
-
-const findRow = (body, rows) =>
-  runNode('Tìm dòng bài viết', {
-    input: rows.map((json) => ({ json })),
-    nodes: { Config: [{ json: CONFIG }], 'Webhook: Đăng bài': [{ json: { body } }] },
-  })[0].json;
-
-const ROW = {
-  row_number: 5,
-  post_id: 'AP-0002',
-  status: 'NEED_CONTENT',
-  title: 'T',
-  drive_folder_url: 'https://drive.google.com/drive/folders/1AbCdEfGhIjKlMnOpQrStUvWxYz123456',
-};
-
-test('tìm theo post_id và bóc được folder id', () => {
-  const r = findRow({ post_id: 'AP-0002', action: 'publish' }, [{ ...ROW, post_id: 'AP-0001' }, ROW]);
-  assert.equal(r.ok, true);
-  assert.equal(r.row_number, 5);
-  assert.equal(r.folder_id, '1AbCdEfGhIjKlMnOpQrStUvWxYz123456');
-  assert.equal(r.action, 'publish');
-});
-
-test('row_number suy ra từ vị trí khi sheet không trả về', () => {
-  const rows = [{ post_id: 'AP-0001' }, { ...ROW, row_number: undefined }];
-  const r = findRow({ post_id: 'AP-0002' }, rows);
-  assert.equal(r.row_number, 3, 'dòng thứ 2 của dữ liệu = dòng 3 của sheet');
-});
-
-test('bài đã POSTED thì chặn', () => {
-  const r = findRow({ post_id: 'AP-0002' }, [{ ...ROW, status: 'POSTED', posted_at: '2026-01-01 10:00' }]);
-  assert.equal(r.ok, false);
-  assert.equal(r.http_code, 409);
-  assert.equal(r.status_write, 'POSTED');
-});
-
-test('force = true thì vẫn cho đăng lại', () => {
-  const r = findRow({ post_id: 'AP-0002', force: true }, [{ ...ROW, status: 'POSTED' }]);
-  assert.equal(r.ok, true);
-  assert.equal(r.force, true);
-});
-
-test('đang POSTING thì chặn', () => {
-  const r = findRow({ post_id: 'AP-0002' }, [{ ...ROW, status: 'POSTING' }]);
-  assert.equal(r.ok, false);
-  assert.equal(r.http_code, 409);
-});
-
-test('SKIP thì chặn', () => {
-  const r = findRow({ post_id: 'AP-0002' }, [{ ...ROW, status: 'SKIP' }]);
-  assert.equal(r.ok, false);
-});
-
-test('thiếu link folder => NEED_CONTENT', () => {
-  const r = findRow({ post_id: 'AP-0002' }, [{ ...ROW, drive_folder_url: '' }]);
-  assert.equal(r.ok, false);
-  assert.equal(r.http_code, 400);
-  assert.equal(r.status_write, 'NEED_CONTENT');
-});
-
-test('action lạ được coi là publish, "check" giữ nguyên', () => {
-  assert.equal(findRow({ post_id: 'AP-0002', action: 'CHECK' }, [ROW]).action, 'check');
-  assert.equal(findRow({ post_id: 'AP-0002', action: 'gì đó' }, [ROW]).action, 'publish');
-});
-
-test('không thấy bài => throw', () => {
-  assert.throws(() => findRow({ post_id: 'AP-9999' }, [ROW]), /Không tìm thấy bài/);
-});
-
-/* --- Chuẩn hoá nội dung --------------------------------------------------- */
-
-const parse = (text, cfgOverride = {}) =>
-  runNode('Chuẩn hoá nội dung', {
-    input: [{ json: { content_text: text } }],
-    nodes: {
-      Config: [{ json: { ...CONFIG, ...cfgOverride } }],
-      'Kiểm tra đủ thành phần': [{ json: { ...META, images_count: 1, warnings: [] } }],
-    },
-  })[0].json;
-
-const LONG = 'A'.repeat(60);
-
-test('bỏ BOM, gộp dòng trống, giữ emoji và hashtag', () => {
-  const r = parse(`﻿Hello 🌏 world #tag\n\n\n\n${LONG}\n`);
-  assert.equal(r.ok, true);
-  assert.equal(r.message, `Hello 🌏 world #tag\n\n${LONG}`);
-  assert.equal(r.content_chars, r.message.length);
-});
-
-test('bỏ dấu # của tiêu đề markdown nhưng giữ chữ', () => {
-  const r = parse(`# Tiêu đề bài\n\n${LONG}`);
-  assert.equal(r.message.startsWith('Tiêu đề bài\n\n'), true, r.message);
-});
-
-test('nội dung rỗng => lỗi', () => {
-  const r = parse('   \n  ');
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('rỗng')));
-});
-
-test('nội dung quá ngắn => lỗi', () => {
-  const r = parse('Hi');
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('quá ngắn')));
-});
-
-test('nội dung quá dài => lỗi', () => {
-  const r = parse('A'.repeat(60001));
-  assert.equal(r.ok, false);
-  assert.ok(r.errors.some((e) => e.includes('quá dài')));
-});
-
-/* --- Soạn payload bài đăng ------------------------------------------------ */
-
-const buildPayload = (imagesCount, uploaded) =>
-  runNode('Soạn payload bài đăng', {
-    input: uploaded.map((id) => ({ json: { id } })),
-    nodes: {
-      Config: [{ json: CONFIG }],
-      'Chuẩn hoá nội dung': [{ json: { ...META, message: 'Nội dung tiếng Anh', images_count: imagesCount } }],
-      'FB: Upload ảnh (chưa publish)': uploaded.map((id) => ({ json: { id } })),
-    },
-  })[0].json;
-
-test('payload gắn đúng media_fbid theo thứ tự', () => {
-  const r = buildPayload(2, ['111', '222']);
-  assert.equal(r.upload_ok, true);
-  assert.deepEqual(plain(r.payload), {
-    message: 'Nội dung tiếng Anh',
-    attached_media: [{ media_fbid: '111' }, { media_fbid: '222' }],
+test('Sources: chỉ lấy dòng active có link, max_posts tối đa 10', () => {
+  const r = runNode('Lọc nguồn đang bật', {
+    input: items([
+      { source_name: 'A', page_url: 'https://www.facebook.com/a', active: true, max_posts: 50 },
+      { source_name: 'B', page_url: 'https://www.facebook.com/b', active: false },
+      { source_name: 'C', page_url: '', active: 'TRUE' },
+      { page_id_or_url: 'https://www.facebook.com/d', active: 'x' },
+    ]),
+    nodes: { Config: cfg() },
   });
+  assert.deepEqual(r.map((x) => [x.source_name, x.page, x.max_posts]), [
+    ['A', 'https://www.facebook.com/a', 10],
+    ['https://www.facebook.com/d', 'https://www.facebook.com/d', 5],
+  ]);
 });
 
-test('upload thiếu ảnh => upload_ok = false, không đăng', () => {
-  const r = buildPayload(3, ['111']);
-  assert.equal(r.upload_ok, false);
-  assert.ok(r.error.message.includes('1/3'), r.error.message);
+test('Sources: không có page nào bật => báo lỗi rõ', () => {
+  assert.throws(() => runNode('Lọc nguồn đang bật', { input: items([{ active: false }]), nodes: { Config: cfg() } }), /chưa có page nào bật/);
 });
 
-test('bài không ảnh => payload chỉ có message', () => {
-  const r = runNode('Soạn payload bài đăng', {
-    input: [{ json: {} }],
-    nodes: {
-      Config: [{ json: CONFIG }],
-      'Chuẩn hoá nội dung': [{ json: { ...META, message: 'Chỉ chữ', images_count: 0 } }],
-    },
-  })[0].json;
-  assert.equal(r.upload_ok, true);
-  assert.deepEqual(plain(r.payload), { message: 'Chỉ chữ' });
+const normCrawler = (responses, over = {}) =>
+  runNode('Chuẩn hoá bài crawler', { input: items(responses), nodes: { Config: cfg(over), 'Lọc nguồn đang bật': SOURCES } });
+const cpost = (id, extra = {}) => ({ source_post_id: id, source_post_url: `https://fb/${id}`, text: `Bài ${id}\n\nđoạn 2`, images: ['https://x/1.jpg'], ...extra });
+
+test('crawler: gán đúng tên page, giữ xuống dòng, ảnh tối đa 10', () => {
+  const many = Array.from({ length: 12 }, (_, i) => `https://x/${i}.jpg`);
+  const r = normCrawler([{ ok: true, posts: [cpost('1')] }, { ok: true, posts: [cpost('2', { images: many })] }]);
+  assert.deepEqual(r.map((x) => x.source_page), ['Page A', 'Page B']);
+  assert.equal(r[0].source_text, 'Bài 1\n\nđoạn 2');
+  assert.equal(r[0].title, 'Bài 1 đoạn 2');
+  assert.equal(r[1].source_images.length, 10);
 });
 
-/* --- Chọn bài đến hạn (workflow 03) -------------------------------------- */
+test('crawler: bỏ reel/video không ảnh (tắt được bằng skip_video_posts)', () => {
+  const resp = [{ ok: true, posts: [cpost('v', { images: [], has_video: true }), cpost('p')] }, { ok: true, posts: [cpost('q')] }];
+  assert.deepEqual(normCrawler(resp).map((x) => x.source_post_id), ['p', 'q']);
+  assert.equal(normCrawler(resp, { skip_video_posts: false }).length, 3);
+});
 
-const wf3 = JSON.parse(readFileSync(join(ROOT, 'n8n', 'workflows', '03-publish-queue.json'), 'utf8'));
-const dueCode = wf3.nodes.find((n) => n.name === 'Chọn bài đến hạn').parameters.jsCode;
-
-function runDue(rows, cfg = {}) {
-  const config = { sheet_id: 's', publish_url: 'https://n8n/webhook/autopost-publish', webhook_secret: 's3cret', timezone: 'Asia/Ho_Chi_Minh', max_per_run: 3, ...cfg };
-  const wrap = (items) => ({ all: () => items, first: () => items[0], get item() { return items[0]; } });
-  const sandbox = {
-    $input: wrap(rows.map((json) => ({ json }))),
-    $json: {},
-    $: (name) => (name === 'Config' ? wrap([{ json: config }]) : (() => { throw new Error(name); })()),
-    Intl,
-    console: { log() {} },
-  };
-  return new vm.Script(`(function(){\n${dueCode}\n})()`).runInNewContext(sandbox).map((i) => i.json);
-}
-
-test('tick publish_now => được chọn', () => {
-  const r = runDue([{ post_id: 'AP-1', status: 'READY', publish_now: true }]);
+test('crawler: bài chia sẻ có nhãn; 1 page lỗi / 0 bài không chặn page khác', () => {
+  const r = normCrawler([{ ok: false, error: 'checkpoint' }, { ok: true, posts: [cpost('s', { is_shared: true })] }]);
   assert.equal(r.length, 1);
-  assert.equal(r[0].post_id, 'AP-1');
-  assert.equal(r[0].secret, 's3cret');
+  assert.match(r[0].title, /^\[Chia sẻ\]/);
+  assert.equal(normCrawler([{ ok: true, posts: [] }, { ok: true, posts: [cpost('t')] }]).length, 1);
 });
 
-test('checkbox dạng chữ "TRUE"/"x" cũng hiểu', () => {
-  assert.equal(runDue([{ post_id: 'AP-1', status: 'READY', publish_now: 'TRUE' }]).length, 1);
-  assert.equal(runDue([{ post_id: 'AP-2', status: 'READY', publish_now: 'x' }]).length, 1);
-  assert.equal(runDue([{ post_id: 'AP-3', status: 'READY', publish_now: 'FALSE' }]).length, 0);
+test('crawler: mọi page lỗi hoặc 0 bài => báo lỗi đỏ', () => {
+  assert.throws(() => normCrawler([{ error: { message: 'connect ECONNREFUSED' } }, { ok: true, posts: [] }]), /tất cả page.*ECONNREFUSED.*không lấy được bài nào/);
 });
 
-test('bỏ qua POSTED / POSTING / SKIP dù có tick', () => {
-  for (const status of ['POSTED', 'POSTING', 'SKIP']) {
-    assert.equal(runDue([{ post_id: 'AP-1', status, publish_now: true }]).length, 0, status);
+const dedupe = (posts, known = { existing_keys: ['cu'], max_post_number: 7 }) =>
+  runNode('Bỏ trùng + tạo post_id', { input: items(posts), nodes: { Config: cfg(), 'Gom bài đã có': [{ json: known }] } });
+
+test('bỏ trùng + post_id nối tiếp; có chữ => NEED_TRANSLATE, ảnh mỗi dòng 1 link', () => {
+  const r = dedupe([
+    { source_post_id: 'p1', source_text: 'Xin chào', source_images: ['https://x/a.jpg', 'https://x/b.jpg'] },
+    { source_post_id: 'p1', source_text: 'trùng trong cùng lần' },
+    { source_post_id: 'cu', source_text: 'đã có trong sheet' },
+    { source_post_id: 'p2', source_text: '' },
+  ]);
+  assert.deepEqual(r.map((x) => [x.post_id, x.status]), [['AP-0008', 'NEED_TRANSLATE'], ['AP-0009', 'NEED_CONTENT']]);
+  assert.equal(r[0].source_images, 'https://x/a.jpg\nhttps://x/b.jpg');
+  assert.equal(r[0].images_count, 2);
+  assert.equal(r[0].publish_now, false);
+});
+
+test('Gom bài đã có: lấy khoá chống trùng + số post_id lớn nhất', () => {
+  const [r] = runNode('Gom bài đã có', { input: items([{ post_id: 'AP-0012', source_post_id: 'x' }, { post_id: 'AP-0003', source_post_url: 'u' }, {}]) });
+  assert.equal(r.max_post_number, 12);
+  assert.deepEqual(r.existing_keys, ['x', 'u']);
+});
+
+/* ---------------------------------------------------------------- 2. dịch */
+
+test('lấy prompt từ tab Prompt, thiếu tab thì dùng mặc định', () => {
+  const [fromSheet] = runNode('Lấy prompt', { input: items([{ 'Prompt dịch — sửa thoải mái': 'Dịch nhé:\n{{NOI_DUNG}}' }]) });
+  assert.equal(fromSheet.prompt, 'Dịch nhé:\n{{NOI_DUNG}}');
+  const [fallback] = runNode('Lấy prompt', { input: items([{ error: 'Sheet not found' }]) });
+  assert.equal(fallback.from_sheet, false);
+  assert.match(fallback.prompt, /\{\{NOI_DUNG\}\}/);
+});
+
+const pickT = (rows, limit = 3) =>
+  runNode('Chọn bài cần dịch', {
+    input: items(rows),
+    nodes: { Config: cfg({ translate_per_run: limit }), 'Lấy prompt': [{ json: { prompt: 'P: {{NOI_DUNG}} $& end' } }] },
+  });
+
+test('chỉ dịch dòng NEED_TRANSLATE có source_text và chưa có en_text', () => {
+  const r = pickT([
+    { row_number: 2, post_id: 'AP-1', status: 'NEED_TRANSLATE', source_text: 'Xin chào $1' },
+    { row_number: 3, post_id: 'AP-2', status: 'NEED_TRANSLATE', source_text: 'x', en_text: 'đã có' },
+    { row_number: 4, post_id: 'AP-3', status: 'REVIEW', source_text: 'x' },
+    { row_number: 5, post_id: 'AP-4', status: 'NEED_TRANSLATE', source_text: '' },
+  ]);
+  assert.deepEqual(r.map((x) => x.post_id), ['AP-1']);
+  assert.equal(r[0].request_body.contents[0].parts[0].text, 'P: Xin chào $1 $& end', 'chèn nguyên văn, $ không bị hiểu là mẫu thay thế');
+});
+
+test('giới hạn số bài dịch mỗi lần', () => {
+  const rows = Array.from({ length: 6 }, (_, i) => ({ row_number: i + 2, post_id: `AP-${i}`, status: 'NEED_TRANSLATE', source_text: 'x' }));
+  assert.equal(pickT(rows, 2).length, 2);
+});
+
+const applyT = (responses) =>
+  runNode('Gắn bản dịch', {
+    input: items(responses),
+    nodes: { Config: cfg(), 'Chọn bài cần dịch': responses.map((_, i) => ({ json: { row_number: 10 + i, post_id: `AP-${i}` } })) },
+  });
+const gem = (text, finishReason = 'STOP') => ({ candidates: [{ content: { parts: [{ text }] }, finishReason }] });
+
+test('Gemini dịch xong => en_text + REVIEW, bỏ code block AI tự thêm', () => {
+  const [r] = applyT([gem('```\nHello world 🌏\n\n\n\n#travel\n```')]);
+  assert.equal(r.row_number, 10);
+  assert.equal(r.status, 'REVIEW');
+  assert.equal(r.en_text, 'Hello world 🌏\n\n#travel');
+});
+
+test('Gemini: bỏ phần "thought", cảnh báo khi bị cắt MAX_TOKENS', () => {
+  const [r] = applyT([{ candidates: [{ content: { parts: [{ text: 'nghĩ...', thought: true }, { text: 'Final' }] }, finishReason: 'MAX_TOKENS' }] }]);
+  assert.equal(r.en_text, 'Final');
+  assert.match(r.check_note, /MAX_TOKENS/);
+});
+
+test('hết quota / quá tải / sai key => giữ NEED_TRANSLATE để tự thử lại', () => {
+  for (const msg of ['429 RESOURCE_EXHAUSTED', 'The service is currently unavailable (503)', 'API key not valid. Please pass a valid API key.']) {
+    const [r] = applyT([{ error: { message: msg } }]);
+    assert.equal(r.status, undefined, msg);
+    assert.equal(r.en_text, undefined);
+    assert.match(r.check_note, /tự thử lại/);
   }
 });
 
-test('hẹn giờ quá khứ => chọn, tương lai => chưa', () => {
-  assert.equal(runDue([{ post_id: 'AP-1', status: 'READY', scheduled_at: '2000-01-01 08:00' }]).length, 1);
-  assert.equal(runDue([{ post_id: 'AP-2', status: 'READY', scheduled_at: '2999-01-01 08:00' }]).length, 0);
+test('bị chặn nội dung / lỗi khác => ERROR, gợi ý dịch tay', () => {
+  const [blocked] = applyT([{ promptFeedback: { blockReason: 'SAFETY' }, candidates: [] }]);
+  assert.equal(blocked.status, 'ERROR');
+  assert.match(blocked.check_note, /SAFETY/);
+  const [bad] = applyT([{ error: { message: '400 model not found' } }]);
+  assert.equal(bad.status, 'ERROR');
+  assert.match(bad.check_note, /menu 🌐/);
 });
 
-test('chấp nhận cả dạng ISO có chữ T', () => {
-  assert.equal(runDue([{ post_id: 'AP-1', status: 'READY', scheduled_at: '2000-01-01T08:00:00' }]).length, 1);
+/* ---------------------------------------------------------------- 3. đăng */
+
+const due = (rows) => runNode('Chọn bài đến hạn', { input: items(rows), nodes: { Config: cfg() } });
+
+test('tick publish_now => được chọn, kèm dữ liệu dòng', () => {
+  const [r] = due([{ row_number: 4, post_id: 'AP-1', status: 'REVIEW', publish_now: true, en_text: 'x' }]);
+  assert.equal(r.post_id, 'AP-1');
+  assert.equal(r.row_number, 4);
+  assert.equal(r.en_text, 'x');
+  assert.equal(r.reason, 'tick publish_now');
+  assert.equal(r.sort, undefined);
 });
 
-test('giới hạn max_per_run', () => {
-  const rows = Array.from({ length: 10 }, (_, i) => ({ post_id: `AP-${i}`, status: 'READY', publish_now: true }));
-  assert.equal(runDue(rows).length, 3);
-  assert.equal(runDue(rows, { max_per_run: 5 }).length, 5);
+test('checkbox dạng chữ "TRUE"/"x" cũng hiểu, "FALSE" thì không', () => {
+  assert.equal(due([{ post_id: 'AP-1', publish_now: 'TRUE' }]).length, 1);
+  assert.equal(due([{ post_id: 'AP-2', publish_now: 'x' }]).length, 1);
+  assert.equal(due([{ post_id: 'AP-3', publish_now: 'FALSE' }]).length, 0);
+});
+
+test('bỏ qua POSTED / POSTING / SKIP dù có tick', () => {
+  for (const status of ['POSTED', 'POSTING', 'SKIP']) assert.equal(due([{ post_id: 'AP-1', status, publish_now: true }]).length, 0, status);
+});
+
+test('mỗi lượt chỉ đăng 1 bài: tick tay trước, rồi bài hẹn giờ sớm nhất', () => {
+  const r = due([
+    { post_id: 'H2', scheduled_at: '2000-01-02 08:00' },
+    { post_id: 'H1', scheduled_at: '2000-01-01 08:00' },
+    { post_id: 'T', publish_now: true },
+  ]);
+  assert.deepEqual(r.map((x) => x.post_id), ['T']);
+  assert.deepEqual(due([{ post_id: 'H2', scheduled_at: '2000-01-02 08:00' }, { post_id: 'H1', scheduled_at: '2000-01-01 08:00' }]).map((x) => x.post_id), ['H1']);
+});
+
+test('hẹn giờ: quá khứ => đăng, tương lai / không đọc được => chưa', () => {
+  assert.equal(due([{ post_id: 'A', scheduled_at: '2000-01-01T08:00:00' }]).length, 1);
+  assert.equal(due([{ post_id: 'B', scheduled_at: '31/01/2000 08:00:00' }]).length, 1, 'dd/mm/yyyy');
+  assert.equal(due([{ post_id: 'C', scheduled_at: 36526.5 }]).length, 1, 'ô ngày (serial) của Sheet');
+  assert.equal(due([{ post_id: 'D', scheduled_at: '2999-01-01 08:00' }]).length, 0);
+  assert.equal(due([{ post_id: 'E', scheduled_at: 'sáng mai' }]).length, 0);
+});
+
+test('bài hẹn giờ đã ERROR không bị thử lại vô hạn (tick tay vẫn được)', () => {
+  assert.equal(due([{ post_id: 'A', status: 'ERROR', scheduled_at: '2000-01-01 08:00' }]).length, 0);
+  assert.equal(due([{ post_id: 'A', status: 'ERROR', scheduled_at: '2000-01-01 08:00', publish_now: true }]).length, 1);
 });
 
 test('dòng trống / thiếu post_id bị bỏ qua', () => {
-  assert.equal(runDue([{}, { post_id: '', publish_now: true }]).length, 0);
+  assert.equal(due([{}, { post_id: '', publish_now: true }]).length, 0);
+});
+
+const EN = 'This is the English translation of the original post, long enough to pass.';
+const URL1 = 'https://scontent.xx.fbcdn.net/v/1.jpg?oe=A';
+const URL2 = 'https://scontent.xx.fbcdn.net/v/2.jpg?oe=B';
+const check = (row, over = {}) => runNode('Kiểm tra bài', { input: items([{ row_number: 7, post_id: 'AP-7', reason: 'tick', ...row }]), nodes: { Config: cfg(over) } })[0];
+
+test('kiểm tra: đủ bản dịch + ảnh => ok, ảnh giữ thứ tự, bỏ rác', () => {
+  const r = check({ en_text: `﻿${EN}\r\n\n\n\nHết.`, source_images: `${URL1}\n  ${URL2}\nrác` });
+  assert.equal(r.ok, true, r.errors.join('|'));
+  assert.equal(r.message, `${EN}\n\nHết.`);
+  assert.deepEqual(r.images.map((i) => i.url), [URL1, URL2]);
+  assert.equal(r.row_number, 7);
+});
+
+test('kiểm tra: chưa dịch / quá ngắn / quá dài => lỗi rõ', () => {
+  assert.match(check({ source_text: 'gốc', source_images: URL1 }).errors[0], /chờ Gemini/);
+  assert.match(check({ en_text: 'Hi', source_images: URL1 }).errors[0], /quá ngắn/);
+  assert.match(check({ en_text: 'A'.repeat(60001), source_images: URL1 }).errors[0], /quá dài/);
+});
+
+test('kiểm tra: thiếu ảnh / quá 10 ảnh; min_images = 0 cho bài chỉ chữ', () => {
+  assert.match(check({ en_text: EN }).errors[0], /Thiếu ảnh/);
+  const many = Array.from({ length: 11 }, (_, i) => `${URL1}&n=${i}`).join('\n');
+  assert.match(check({ en_text: EN, source_images: many }).errors[0], /Quá nhiều ảnh/);
+  assert.equal(check({ en_text: EN }, { min_images: 0 }).ok, true);
+});
+
+const payload = (checkOut, nodes = {}) =>
+  runNode('Soạn payload bài đăng', { input: [{ json: {} }], nodes: { 'Kiểm tra bài': [{ json: checkOut }], ...nodes } })[0];
+const CHECKED = { row_number: 7, message: EN, images_count: 2, content_chars: EN.length };
+
+test('payload gắn đúng media_fbid theo thứ tự', () => {
+  const r = payload(CHECKED, { 'Tải ảnh gốc': items([{}, {}]), 'FB: Upload ảnh (chưa publish)': items([{ id: '111' }, { id: '222' }]) });
+  assert.equal(r.upload_ok, true);
+  assert.deepEqual(r.payload, { message: EN, attached_media: [{ media_fbid: '111' }, { media_fbid: '222' }] });
+});
+
+test('tải ảnh gốc lỗi => huỷ đăng, báo link hết hạn', () => {
+  const r = payload(CHECKED, {
+    'Tải ảnh gốc': items([{}, { error: { message: '403 Forbidden' } }]),
+    'FB: Upload ảnh (chưa publish)': items([{ id: '111' }, { error: { message: 'no binary' } }]),
+  });
+  assert.equal(r.upload_ok, false);
+  assert.match(r.error.message, /1\/2/);
+  assert.match(r.error.message, /tải ảnh 2 lỗi: 403 Forbidden.*vài ngày/);
+});
+
+test('Facebook từ chối upload => có lý do từng ảnh', () => {
+  const r = payload({ ...CHECKED, images_count: 1 }, { 'Tải ảnh gốc': items([{}]), 'FB: Upload ảnh (chưa publish)': items([{ error: { message: 'Invalid image' } }]) });
+  assert.equal(r.upload_ok, false);
+  assert.match(r.error.message, /upload ảnh 1 lỗi: Invalid image/);
+});
+
+test('bài không ảnh => chỉ có message, không đọc dữ liệu ảnh cũ', () => {
+  const r = payload({ ...CHECKED, images_count: 0 }, { 'FB: Upload ảnh (chưa publish)': items([{ id: 'cu-tu-lan-truoc' }]) });
+  assert.equal(r.upload_ok, true);
+  assert.deepEqual(r.payload, { message: EN });
+});
+
+const stuck = (rows) => runNode('Tìm bài kẹt POSTING', { input: items(rows), nodes: { Config: cfg() } });
+
+test('POSTING quá 15 phút => ERROR, không tự đăng lại', () => {
+  const [r] = stuck([{ row_number: 4, status: 'POSTING', last_action_at: '2000-01-01 08:00:00' }]);
+  assert.equal(r.row_number, 4);
+  assert.equal(r.status, 'ERROR');
+  assert.equal(r.publish_now, false);
+  assert.match(r.check_note, /kiểm tra Page/);
+});
+
+test('POSTING vừa xong / giờ lạ / trạng thái khác => để yên', () => {
+  assert.equal(stuck([{ status: 'POSTING', last_action_at: '2999-01-01 08:00:00' }]).length, 0);
+  assert.equal(stuck([{ status: 'POSTING', last_action_at: '' }]).length, 0);
+  assert.equal(stuck([{ status: 'ERROR', last_action_at: '2000-01-01 08:00:00' }]).length, 0);
+});
+
+/* ------------------------------------- khớp cột giữa n8n và Apps Script */
+
+test('mọi cột n8n ghi vào Posts đều có trong POSTS_HEADERS của Apps Script', () => {
+  const gs = {};
+  vm.runInNewContext(readFileSync(join(ROOT, 'apps-script', 'Code.gs'), 'utf8'), gs);
+  const headers = new Set([...gs.POSTS_HEADERS, 'row_number']); // row_number: cột ảo để update
+  const written = [
+    ...dedupe([{ source_post_id: 'k', source_text: 'x', source_images: [] }]),
+    ...applyT([gem('Hello')]),
+    ...applyT([{ error: { message: '400' } }]),
+    ...stuck([{ status: 'POSTING', last_action_at: '2000-01-01 00:00:00' }]),
+    ...runNode('Soạn ghi chú lỗi', { input: [{ json: { row_number: 2, errors: ['x'], images_count: 0 } }] }),
+    ...runNode('Soạn trạng thái POSTING', { input: [{ json: { row_number: 2, images_count: 0, reason: 'x' } }] }),
+    ...runNode('Soạn trạng thái POSTED', { input: [{ json: {} }], nodes: { 'Kiểm tra bài': [{ json: CHECKED }], 'FB: Tạo bài trên Page': [{ json: { id: '1_2' } }] } }),
+    ...runNode('Soạn lỗi Facebook', { input: [{ json: { error: { message: 'x' } } }], nodes: { 'Kiểm tra bài': [{ json: CHECKED }] } }),
+  ];
+  const unknown = [...new Set(written.flatMap((r) => Object.keys(r)))].filter((k) => !headers.has(k));
+  assert.deepEqual(unknown, [], 'n8n ghi cột không có trong sheet: ' + unknown.join(', '));
+  assert.equal(gs.SOURCES_HEADERS.includes('page_url'), true);
+});
+
+test('prompt mặc định giống nhau ở n8n và Sheet, có yêu cầu hashtag', () => {
+  const gs = {};
+  vm.runInNewContext(readFileSync(join(ROOT, 'apps-script', 'Code.gs'), 'utf8'), gs);
+  const [fallback] = runNode('Lấy prompt', { input: items([{}]) });
+  assert.equal(fallback.prompt, gs.DEFAULT_PROMPT);
+  assert.match(gs.DEFAULT_PROMPT, /3–5 hashtag tiếng Anh/);
+  assert.equal(gs.DEFAULT_PROMPT.split('{{NOI_DUNG}}').length, 2);
+});
+
+test('menu ① nâng cấp prompt cũ chưa sửa, giữ nguyên prompt bạn đã sửa', () => {
+  const gs = {};
+  vm.runInNewContext(readFileSync(join(ROOT, 'apps-script', 'Code.gs'), 'utf8'), gs);
+  const setup = (a2) => {
+    const values = { 1: 'tiêu đề', 2: a2 };
+    const cellAt = (row) => {
+      const cell = {
+        getValue: () => values[row],
+        setValue(v) { values[row] = v; return cell; },
+        isBlank: () => !values[row],
+        setFontWeight: () => cell, setBackground: () => cell, setFontColor: () => cell,
+        setWrap: () => cell, setVerticalAlignment: () => cell,
+      };
+      return cell;
+    };
+    const sh = { getRange: (row) => cellAt(row), setColumnWidth() {}, setFrozenRows() {} };
+    gs.setupPromptSheet_({ getSheetByName: () => sh, insertSheet: () => sh });
+    return values[2];
+  };
+  assert.equal(setup(''), gs.DEFAULT_PROMPT);
+  assert.equal(setup(gs.OLD_DEFAULT_PROMPTS[0]), gs.DEFAULT_PROMPT);
+  assert.equal(setup('Prompt riêng của tôi {{NOI_DUNG}}'), 'Prompt riêng của tôi {{NOI_DUNG}}');
 });
 
 /* ------------------------------------------------------------------- runner */

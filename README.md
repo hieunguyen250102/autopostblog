@@ -1,122 +1,73 @@
-# AutoPost Blog — tự động đăng bài lên Facebook Page
+# AutoPost Blog — reup bài Facebook, dịch sang tiếng Anh, đăng lên Page
 
-Hệ thống đăng bài bán tự động: **n8n** làm bộ máy, **Google Sheet** làm bảng điều
-khiển (trạng thái + nút đăng thủ công), **Google Drive** chứa nội dung đã dịch và
-ảnh, **Facebook Graph API** để đăng lên Page.
-
-Bạn giữ toàn quyền quyết định: máy thu link bài nguồn và kiểm tra thành phần, còn
-việc dịch nội dung và chọn ảnh là của bạn; bài chỉ lên Page khi bạn bấm đăng
-(hoặc hẹn giờ).
-
----
-
-## 1. Luồng hoạt động
+Máy tự **thu bài** từ các page nguồn (crawler SeleniumBase), tự **dịch** sang tiếng
+Anh bằng Gemini API. **Google Sheet** chỉ là nơi lưu bài và duyệt: bạn đọc/sửa bản
+dịch, tick một ô là bài lên Page — ảnh lấy từ bài gốc.
 
 ```mermaid
 flowchart LR
-    A[Page nguồn<br/>Facebook / RSS] -->|Workflow 01<br/>mỗi 2 giờ| B[(Google Sheet<br/>tab Posts)]
-    B -->|bạn mở link bài gốc| C[Bạn dịch sang tiếng Anh<br/>+ tải ảnh về]
-    C --> D[Folder Google Drive<br/>1 file nội dung + các ảnh]
-    D -->|dán link folder vào sheet| B
-    B -->|bấm Kiểm tra / tick publish_now| E{{Workflow 02}}
-    E -->|đủ nội dung + ảnh| F[Facebook Page]
-    E -->|thiếu| B
-    F -->|ghi post id + permalink| B
+    A[Page nguồn] -->|fb-crawler<br/>mỗi 4 giờ| B[(Google Sheet<br/>tab Posts)]
+    B -->|mỗi 5 phút| G[Gemini API]
+    G -->|en_text, REVIEW| B
+    B -->|bạn duyệt, tick publish_now<br/>mỗi 2 phút đăng 1 bài| F[Facebook Page]
+    F -->|POSTED + permalink| B
 ```
 
-Vòng đời một bài viết, xem ở cột `status`:
+Tất cả nằm trong **một workflow n8n** (`n8n/workflows/autopost.json`) với 3 lịch chạy.
 
-| status | Nghĩa | Ai làm bước tiếp theo |
+| `status` | Nghĩa | Ai làm tiếp |
 | --- | --- | --- |
-| `NEED_CONTENT` | Đã thu được link bài gốc, chưa có nội dung/ảnh | **Bạn**: dịch, up Drive, dán link folder |
-| `READY` | Đã kiểm tra: đủ nội dung + ảnh | **Bạn**: tick `publish_now` để đăng |
-| `POSTING` | n8n đang gọi Facebook | chờ |
-| `POSTED` | Đã lên Page, có `fb_post_id` + `fb_permalink` | xong |
-| `ERROR` | Thiếu thành phần / Facebook từ chối — lý do ở `check_note` | **Bạn**: sửa rồi bấm lại |
-| `SKIP` | Bạn quyết định không đăng | — |
+| `NEED_TRANSLATE` | Vừa thu về | n8n tự dịch |
+| `REVIEW` | Đã có bản dịch ở `en_text` | **Bạn**: đọc, sửa, tick `publish_now` |
+| `POSTING` → `POSTED` | Đang đăng → đã lên Page | — |
+| `ERROR` | Lỗi, lý do ở `check_note` | **Bạn**: sửa rồi tick lại |
+| `SKIP` | Không đăng | — |
 
-## 2. Thành phần trong repo
+## Cài đặt
+
+1. **[docs/01-facebook-app.md](docs/01-facebook-app.md)** — lấy Page Access Token dài
+   hạn để đăng bài (`npm run check:fb` để kiểm tra).
+2. **[docs/02-google-sheet.md](docs/02-google-sheet.md)** — tạo Sheet, dán
+   `apps-script/Code.gs`, bấm *① Khởi tạo*, điền page nguồn vào tab `Sources`.
+3. **[docs/03-n8n-va-crawler.md](docs/03-n8n-va-crawler.md)** — điền `.env`,
+   `docker compose up -d --build`, `npm run build`, import **1 file**
+   `n8n/local/autopost.json`, chọn 3 credential (Google Sheets, Facebook, Gemini), Active.
+
+Dùng hằng ngày & tra lỗi: **[docs/04-van-hanh-va-loi.md](docs/04-van-hanh-va-loi.md)**.
+Chạy 24/7 trên server: **[docs/05-deploy-vps.md](docs/05-deploy-vps.md)**.
+Đổi giờ thu bài / dịch / đăng: docs/03 mục 7.
+
+## Thành phần
 
 ```
-n8n/workflows/01-collect-source-posts.json   Thu link bài từ page nguồn → ghi vào sheet
-n8n/workflows/02-check-and-publish.json      Kiểm tra đủ thành phần + đăng lên Page
-n8n/workflows/03-publish-queue.json          Quét sheet mỗi 5 phút: tick ô / hẹn giờ
-apps-script/Code.gs                          Menu + nút bấm + tạo cấu trúc sheet
-tools/build-workflows.mjs                    Nguồn sự thật sinh ra 3 file JSON trên
-tools/validate-workflows.mjs                 Kiểm tra JSON trước khi import
-tools/test-logic.mjs                         Chạy code trong node Code với dữ liệu giả
-tools/check-facebook.mjs                     Test Page Access Token trước khi dùng
-examples/content.md                          Mẫu file nội dung đặt trong folder Drive
-docs/                                        Hướng dẫn cài đặt từng phần
+n8n/workflows/autopost.json   Workflow duy nhất (placeholder) — sinh từ tools/build-workflows.mjs
+n8n/local/autopost.json       Bản đã điền sẵn từ .env (không commit) — import file này
+crawler/                      fb-crawler: Python + SeleniumBase, HTTP API cho n8n
+docker-compose.yml            n8n + fb-crawler
+apps-script/Code.gs           Tạo cấu trúc Sheet + hộp thoại dịch dự phòng / thêm bài tay
+tools/build-workflows.mjs     Nguồn sự thật sinh workflow
+tools/validate-workflows.mjs  Kiểm tra cấu trúc workflow
+tools/test-logic.mjs          Chạy thật code các node với dữ liệu giả
+tools/check-facebook.mjs      Kiểm tra Page Access Token
 ```
 
-> Các file JSON trong `n8n/workflows/` được **sinh ra** từ `tools/build-workflows.mjs`.
-> Muốn sửa workflow lâu dài thì sửa file builder rồi chạy `npm run build`, đừng sửa
-> JSON bằng tay (sửa trực tiếp trong UI n8n để thử nghiệm thì hoàn toàn được).
-
-## 3. Cài đặt — 5 bước
-
-Chi tiết từng bước ở `docs/`, thứ tự nên làm:
-
-1. **[docs/01-facebook-app.md](docs/01-facebook-app.md)** — tạo app trên
-   developers.facebook.com, lấy **Page Access Token dài hạn** với quyền
-   `pages_manage_posts` + `pages_read_engagement`.
-   Kiểm tra token: `cp .env.example .env` → điền → `npm run check:fb`.
-2. **[docs/02-google-drive.md](docs/02-google-drive.md)** — quy ước đặt file trong
-   folder bài viết và cách chia sẻ folder cho n8n.
-3. **[docs/03-google-sheet-apps-script.md](docs/03-google-sheet-apps-script.md)** —
-   tạo Sheet, dán `apps-script/Code.gs`, bấm *Khởi tạo cấu trúc sheet*.
-4. **[docs/04-n8n-setup.md](docs/04-n8n-setup.md)** — import 3 workflow, tạo 3
-   credential (Google Sheets, Google Drive, Facebook Graph API), điền node
-   `Config`, activate.
-5. **[docs/05-van-hanh.md](docs/05-van-hanh.md)** — quy trình dùng hàng ngày.
-
-Gặp lỗi: **[docs/06-troubleshooting.md](docs/06-troubleshooting.md)** — tra theo
-thông báo trong cột `check_note`.
-
-## 4. Kiểm tra "đủ thành phần" gồm những gì
-
-Workflow 02 chặn việc đăng nếu folder Drive chưa đạt:
-
-- có đúng ≥ 1 file nội dung: `.txt`, `.md` hoặc Google Docs (chính là bài đã dịch
-  sang tiếng Anh);
-- nội dung không rỗng, ≥ `min_content_chars` ký tự (mặc định 50) và < 60.000 ký tự;
-- số ảnh nằm trong khoảng `min_images`…`max_images` (mặc định 1…10 — Facebook chỉ
-  cho tối đa 10 ảnh trong một bài);
-- ảnh đúng định dạng `jpg/png/gif/webp` và không vượt `max_image_mb` (mặc định 8MB);
-- ảnh được upload hết lên Facebook trước khi tạo bài — nếu chỉ upload được một
-  phần, bài **không** được tạo (tránh đăng thiếu ảnh);
-- bài đã `POSTED` sẽ không đăng lại (trừ khi gửi `force: true`).
-
-Mọi lỗi được ghi thẳng vào cột `check_note` của dòng đó, kèm `status = ERROR`.
-
-## 5. Ba cách để "bấm đăng"
-
-| Cách | Cần gì | Độ trễ |
-| --- | --- | --- |
-| Menu **🚀 Auto Post → 📤 Đăng bài đang chọn** | Apps Script đã cấu hình | ngay |
-| **Tick ô `publish_now`** | thêm trigger onEdit (menu ③) | ngay |
-| **Tick ô `publish_now`** hoặc điền `scheduled_at` | chỉ cần workflow 03 bật | ≤ 5 phút |
-
-Cách 3 là lưới an toàn: kể cả khi Apps Script chưa cài, chỉ cần tick ô là workflow
-03 sẽ thấy và đăng trong vòng 5 phút.
-
-## 6. Bảo mật
-
-- Webhook n8n được bảo vệ bằng `webhook_secret` (so khớp trong node `Config`);
-  gọi sai secret trả về 401. Đổi secret ở cả 3 nơi: node Config của workflow 02,
-  node Config của workflow 03, và menu ② trong Sheet.
-- Token Facebook chỉ nằm trong credential của n8n; không có token nào trong repo
-  hay trong Sheet.
-- `.env` (dùng cho script kiểm tra) đã được `.gitignore`.
-
-## 7. Lệnh hay dùng
+## Lệnh hay dùng
 
 ```bash
-npm run build       # sinh lại n8n/workflows/*.json từ builder
-npm run validate    # kiểm tra cấu trúc workflow, biểu thức, cú pháp node Code
-npm run test:logic  # chạy thật code kiểm tra thành phần với dữ liệu giả (36 test)
-npm test            # build + validate + test logic
-npm run check:fb    # kiểm tra Page Access Token (đọc .env)
-npm run check:fb -- --post   # đăng thử 1 bài chế độ chỉ-mình-tôi-thấy
+npm run build                  # sinh workflow (n8n/local/ điền sẵn từ .env)
+npm test                       # build + validate + test logic + test crawler
+npm run check:fb               # kiểm tra Page Access Token (đọc .env)
+docker compose up -d --build   # chạy n8n + fb-crawler
+docker compose logs -f fb-crawler
 ```
+
+## Lưu ý
+
+- **Crawler không cần tài khoản Facebook.** Không đăng nhập thì mỗi lần chỉ thấy ~3
+  bài mới nhất/page. Có thể cho crawler dùng cookie để thấy nhiều hơn (docs/03), nhưng
+  crawl vi phạm điều khoản Facebook và tài khoản đó có thể bị checkpoint/khoá.
+- Link ảnh Facebook **hết hạn sau vài ngày** — duyệt và đăng trong 1–2 ngày.
+- Nội dung và ảnh thuộc bản quyền page gốc; page reup dễ bị Facebook giảm phân phối
+  hoặc bị báo cáo.
+- Sheet id, page id, token chỉ nằm trong `.env` và credential của n8n — không có trong
+  file nào được commit.

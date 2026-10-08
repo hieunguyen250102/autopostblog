@@ -1,0 +1,39 @@
+# n8n + fb-crawler chạy chung một mạng Docker: n8n gọi crawler qua http://fb-crawler:8000
+#
+#   docker compose up -d --build
+#
+# Lần đầu chuyển từ container n8n chạy bằng `docker run`: `docker rm -f n8n` trước
+# (dữ liệu nằm trong volume n8n_data nên không mất).
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n
+    container_name: n8n
+    restart: unless-stopped
+    # Chỉ mở cho máy này. Trên VPS: vào n8n qua SSH tunnel, hoặc reverse proxy HTTPS
+    # (docs/05-deploy-vps.md). Đừng đổi thành "5678:5678" — Docker bỏ qua cả ufw.
+    ports:
+      - "127.0.0.1:5678:5678"
+    environment:
+      - GENERIC_TIMEZONE=Asia/Ho_Chi_Minh
+      - TZ=Asia/Ho_Chi_Minh
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  fb-crawler:
+    build: ./crawler
+    container_name: fb-crawler
+    restart: unless-stopped
+    shm_size: 1gb # Chrome cần /dev/shm lớn, mặc định 64MB dễ crash tab
+    environment:
+      - CRAWLER_TOKEN=${CRAWLER_TOKEN:?Thiếu CRAWLER_TOKEN trong .env}
+      - FB_COOKIES_FILE=/secrets/fb_cookies.json
+    volumes:
+      - ./crawler/secrets:/secrets
+    # Chỉ mở cho máy này (để test bằng curl); n8n gọi qua mạng nội bộ Docker.
+    # Muốn đăng nhập Facebook (lấy nhiều bài hơn): đặt cookie vào crawler/secrets/fb_cookies.json
+    ports:
+      - "127.0.0.1:8765:8000"
+
+volumes:
+  n8n_data:
+    external: true # volume có sẵn từ container n8n cũ

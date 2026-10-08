@@ -1,0 +1,1674 @@
+{
+  "name": "AutoPost",
+  "nodes": [
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "c00",
+              "name": "section",
+              "value": "={{ $json.section }}",
+              "type": "string"
+            },
+            {
+              "id": "c01",
+              "name": "sheet_id",
+              "value": "DAN_GOOGLE_SHEET_ID_VAO_DAY",
+              "type": "string"
+            },
+            {
+              "id": "c02",
+              "name": "page_id",
+              "value": "DAN_FACEBOOK_PAGE_ID_VAO_DAY",
+              "type": "string"
+            },
+            {
+              "id": "c03",
+              "name": "crawler_url",
+              "value": "http://fb-crawler:8000/crawl",
+              "type": "string"
+            },
+            {
+              "id": "c04",
+              "name": "crawler_token",
+              "value": "DOI_THANH_CRAWLER_TOKEN",
+              "type": "string"
+            },
+            {
+              "id": "c05",
+              "name": "default_max_posts",
+              "value": 5,
+              "type": "number"
+            },
+            {
+              "id": "c06",
+              "name": "skip_video_posts",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "c07",
+              "name": "post_id_prefix",
+              "value": "AP",
+              "type": "string"
+            },
+            {
+              "id": "c08",
+              "name": "gemini_model",
+              "value": "gemini-3.5-flash-lite",
+              "type": "string"
+            },
+            {
+              "id": "c09",
+              "name": "translate_per_run",
+              "value": 3,
+              "type": "number"
+            },
+            {
+              "id": "c10",
+              "name": "min_images",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "c11",
+              "name": "max_images",
+              "value": 10,
+              "type": "number"
+            },
+            {
+              "id": "c12",
+              "name": "min_content_chars",
+              "value": 50,
+              "type": "number"
+            },
+            {
+              "id": "c13",
+              "name": "stuck_posting_minutes",
+              "value": 15,
+              "type": "number"
+            },
+            {
+              "id": "c14",
+              "name": "graph_version",
+              "value": "v21.0",
+              "type": "string"
+            },
+            {
+              "id": "c15",
+              "name": "timezone",
+              "value": "Asia/Ho_Chi_Minh",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "39b79e41-0059-1f39-b79e-4100591f0000",
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        740,
+        300
+      ],
+      "notes": "SỬA Ở ĐÂY — chỗ duy nhất cần điền: sheet_id, page_id, crawler_token (build từ .env thì đã điền sẵn)",
+      "notesInFlow": true
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 4
+            }
+          ]
+        }
+      },
+      "id": "ca72ab4b-105e-de1c-a72a-b4b105ede100",
+      "name": "Mỗi 4 giờ: thu bài",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        -270
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "section",
+              "value": "collect",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "c76ea98c-102e-1f4c-76ea-98c102e1f400",
+      "name": "Việc: thu bài",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        -270
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "6e65a028-1066-e9f6-e65a-0281066e9f00",
+      "name": "Mỗi 5 phút: dịch",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "section",
+              "value": "translate",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "37807180-1059-09f3-7807-180105909f00",
+      "name": "Việc: dịch",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "da7bfc5c-1030-5bed-a7bf-c5c10305be00",
+      "name": "Mỗi 2 phút: đăng",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        260,
+        870
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "s1",
+              "name": "section",
+              "value": "publish",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "59e29885-102d-6635-9e29-885102d66300",
+      "name": "Việc: đăng",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        500,
+        870
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-collect",
+                    "leftValue": "={{ $json.section }}",
+                    "rightValue": "collect",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "thu bài"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-translate",
+                    "leftValue": "={{ $json.section }}",
+                    "rightValue": "translate",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "dịch"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "id": "r-publish",
+                    "leftValue": "={{ $json.section }}",
+                    "rightValue": "publish",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "đăng"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "88ea8300-1058-b5d8-8ea8-3001058b5d00",
+      "name": "Chọn việc",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        980,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "13c728ab-1042-e691-3c72-8ab1042e6900",
+      "name": "Sheets: Đọc Posts (thu)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1220,
+        -270
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2.",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst rows = $input.all().map((i) => i.json).filter((r) => r && Object.keys(r).length);\nconst keys = [];\nlet maxNum = 0;\nfor (const r of rows) {\n  for (const k of ['source_post_id', 'source_post_url']) {\n    const v = String(r[k] ?? '').trim();\n    if (v) keys.push(v);\n  }\n  const m = String(r.post_id ?? '').trim().match(/(\\d+)\\s*$/);\n  if (m) maxNum = Math.max(maxNum, Number(m[1]));\n}\nreturn [{ json: { existing_keys: keys, max_post_number: maxNum } }];\n"
+      },
+      "id": "2eeff0c1-00c5-8c2e-eff0-c100c58c0000",
+      "name": "Gom bài đã có",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        -270
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Sources",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "b3283864-1040-924b-3283-864104092400",
+      "name": "Sheets: Đọc Sources",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1700,
+        -270
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2.",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst out = [];\nfor (const item of $input.all()) {\n  const r = item.json || {};\n  if (!isTruthy(r.active)) continue;\n  const ref = String(r.page_url ?? r.page_id_or_url ?? '').trim();\n  if (!ref) continue;\n  const max = Number(r.max_posts) > 0 ? Number(r.max_posts) : Number(cfg.default_max_posts) || 5;\n  out.push({ json: {\n    source_name: String(r.source_name ?? '').trim() || ref,\n    page: ref,\n    max_posts: Math.min(max, 10),\n  } });\n}\nif (!out.length) throw new Error('Tab \"Sources\" chưa có page nào bật active');\nreturn out;\n"
+      },
+      "id": "fcb8d768-109c-681f-cb8d-768109c68100",
+      "name": "Lọc nguồn đang bật",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        -270
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Config').first().json.crawler_url }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-Crawler-Token",
+              "value": "={{ $('Config').first().json.crawler_token }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ page: $json.page, max_posts: $json.max_posts }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 20000
+            }
+          },
+          "timeout": 240000
+        }
+      },
+      "id": "b4bfcd9c-1089-115b-4bfc-d9c108911500",
+      "name": "Crawler: Lấy bài của page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2180,
+        -270
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Gọi service fb-crawler (docker compose)."
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst sources = $('Lọc nguồn đang bật').all().map((i) => i.json);\nconst skipVideo = String(cfg.skip_video_posts).toLowerCase() !== 'false';\nconst out = [];\nconst failures = [];\n$input.all().forEach((item, index) => {\n  const src = sources[index] || { source_name: '?' };\n  const body = item.json || {};\n  if (body.error || body.ok === false) {\n    failures.push(src.source_name + ': ' + errMsg(body.error || body));\n    return;\n  }\n  // Crawler luôn trả các bài mới nhất (kể cả bài đã thu) => 0 bài là có vấn đề thật.\n  if (!Array.isArray(body.posts) || !body.posts.length) {\n    failures.push(src.source_name + ': không lấy được bài nào (link page sai, page bị ẩn/giới hạn tuổi, hoặc Facebook chặn tạm thời)');\n    return;\n  }\n  for (const p of body.posts) {\n    const images = Array.isArray(p.images) ? p.images.slice(0, 10) : [];\n    // Reel/video không reup bằng ảnh được.\n    if (skipVideo && p.has_video && !images.length) continue;\n    const text = String(p.text || '').replace(/\\r\\n/g, '\\n').trim();\n    out.push({ json: {\n      source_page: src.source_name,\n      source_post_url: p.source_post_url || '',\n      source_post_id: String(p.source_post_id || ''),\n      title: (p.is_shared ? '[Chia sẻ] ' : '') + text.replace(/\\s+/g, ' ').slice(0, 120),\n      source_text: text.slice(0, 45000),\n      source_images: images,\n    } });\n  }\n});\n// Một page lỗi không chặn page khác; tất cả đều lỗi thì báo đỏ trong n8n Executions.\nif (failures.length === sources.length) {\n  throw new Error('Crawler lỗi với tất cả page — ' + failures.join(' | '));\n}\nreturn out;\n"
+      },
+      "id": "24afd954-1037-4232-4afd-954103742300",
+      "name": "Chuẩn hoá bài crawler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        -270
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst known = $('Gom bài đã có').first().json;\nconst seen = new Set(known.existing_keys || []);\nconst prefix = String(cfg.post_id_prefix || 'AP');\nlet maxNum = Number(known.max_post_number || 0);\nconst stamp = nowIso(cfg.timezone);\nconst rows = [];\nfor (const item of $input.all()) {\n  const p = item.json || {};\n  const key = String(p.source_post_id || p.source_post_url || '').trim();\n  if (!key || seen.has(key)) continue;\n  seen.add(key);\n  maxNum += 1;\n  const hasText = String(p.source_text || '').trim().length > 0;\n  const images = Array.isArray(p.source_images) ? p.source_images : [];\n  rows.push({ json: {\n    post_id: prefix + '-' + String(maxNum).padStart(4, '0'),\n    status: hasText ? 'NEED_TRANSLATE' : 'NEED_CONTENT',\n    publish_now: false,\n    scheduled_at: '',\n    title: p.title || '',\n    en_text: '',\n    source_images: images.join('\\n'),\n    check_note: hasText\n      ? '⏳ Chờ Gemini dịch (tối đa 5 phút)'\n      : 'Bài gốc không có chữ — tự viết nội dung tiếng Anh vào en_text',\n    source_text: p.source_text || '',\n    source_page: p.source_page || '',\n    source_post_url: p.source_post_url || '',\n    source_post_id: p.source_post_id || '',\n    collected_at: stamp,\n    posted_at: '',\n    fb_post_id: '',\n    fb_permalink: '',\n    images_count: images.length,\n    last_action_at: stamp,\n  } });\n}\nreturn rows;\n"
+      },
+      "id": "e78ace15-1069-f6ee-78ac-e151069f6e00",
+      "name": "Bỏ trùng + tạo post_id",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2660,
+        -270
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "f621d388-1052-b20f-621d-3881052b2000",
+      "name": "Sheets: Thêm bài mới",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2900,
+        -270
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Prompt",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "3acb5d30-103f-bbf3-acb5-d30103fbbf00",
+      "name": "Sheets: Đọc Prompt",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1220,
+        300
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2.",
+      "alwaysOutputData": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst DEFAULT_PROMPT = \"Bạn là biên dịch viên nội dung mạng xã hội. Dịch bài đăng Facebook tiếng Việt dưới đây sang tiếng Anh tự nhiên, dễ đọc với người đọc quốc tế.\\n\\nYêu cầu:\\n- Giữ nguyên ý, giọng văn, cách xuống dòng và emoji của bài gốc.\\n- Bỏ số điện thoại, link, lời kêu gọi inbox/comment và mọi chỗ nhắc tên/thương hiệu của page gốc.\\n- Kết thúc bài bằng 1 dòng hashtag riêng (cách nội dung 1 dòng trống): 3–5 hashtag tiếng Anh sát với nội dung, viết liền kiểu CamelCase (vd. #VietnamTravel, #StreetFood), ưu tiên hashtag người đọc quốc tế hay tìm.\\n- Hashtag có sẵn trong bài gốc: dịch sang tiếng Anh nếu có nghĩa và gộp vào dòng hashtag cuối, không lặp lại; bỏ hashtag mang tên page gốc và hashtag chung chung như #viral, #fyp, #trending.\\n- Không thêm lời giải thích, không đặt tiêu đề, không bọc trong dấu ngoặc kép hay code block.\\n- Chỉ trả về bài tiếng Anh hoàn chỉnh (nội dung + dòng hashtag).\\n\\nBài gốc:\\n\\\"\\\"\\\"\\n{{NOI_DUNG}}\\n\\\"\\\"\\\"\";\nlet prompt = '';\nfor (const item of $input.all()) {\n  const values = Object.values(item.json || {}).filter((x) => typeof x === 'string' && x.trim());\n  prompt = values.find((x) => x.includes('{{NOI_DUNG}}')) || values.find((x) => x.length > 80) || '';\n  if (prompt) break;\n}\nreturn [{ json: { prompt: prompt || DEFAULT_PROMPT, from_sheet: Boolean(prompt) } }];\n"
+      },
+      "id": "261e75f8-102a-14b2-61e7-5f8102a14b00",
+      "name": "Lấy prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "3504e3e0-1089-dcd3-504e-3e01089dcd00",
+      "name": "Sheets: Đọc Posts (dịch)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1700,
+        300
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2.",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst template = $('Lấy prompt').first().json.prompt;\nconst limit = Number(cfg.translate_per_run ?? 3);\nconst out = [];\n$input.all().forEach((item, index) => {\n  const r = item.json || {};\n  if (String(r.status ?? '').trim().toUpperCase() !== 'NEED_TRANSLATE') return;\n  const source = String(r.source_text ?? '').trim();\n  if (!source || String(r.en_text ?? '').trim()) return;\n  // split/join thay vì replace: bài gốc có \"$&\", \"$1\"... không bị hiểu là mẫu thay thế.\n  const prompt = template.includes('{{NOI_DUNG}}')\n    ? template.split('{{NOI_DUNG}}').join(source)\n    : template + '\\n\\n' + source;\n  out.push({ json: {\n    row_number: rowNumberOf(r, index),\n    post_id: String(r.post_id ?? '').trim(),\n    request_body: { contents: [{ role: 'user', parts: [{ text: prompt }] }] },\n  } });\n});\nreturn out.slice(0, limit);\n"
+      },
+      "id": "f511cbfc-109e-a63f-511c-bfc109ea6300",
+      "name": "Chọn bài cần dịch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://generativelanguage.googleapis.com/v1beta/models/{{ $('Config').first().json.gemini_model }}:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.request_body) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 6000
+            }
+          },
+          "timeout": 120000
+        }
+      },
+      "id": "4ff822c4-1039-eb64-ff82-2c41039eb600",
+      "name": "Gemini: Dịch",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2180,
+        300
+      ],
+      "onError": "continueRegularOutput",
+      "notes": "Cần chọn credential: Header Auth — Name: x-goog-api-key, Value: API key từ aistudio.google.com"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst asked = $('Chọn bài cần dịch').all();\nconst stamp = nowIso(cfg.timezone);\n\nconst clean = (t) => {\n  let s = String(t || '').replace(/\\r\\n/g, '\\n').trim();\n  s = s.replace(/^\\`\\`\\`[a-zA-Z]*\\n([\\s\\S]*?)\\n\\`\\`\\`$/, '$1').trim();\n  s = s.replace(/^\"\"\"\\n?([\\s\\S]*?)\\n?\"\"\"$/, '$1').trim();\n  if (/^\"[\\s\\S]*\"$/.test(s) && s.indexOf('\"', 1) === s.length - 1) s = s.slice(1, -1).trim();\n  return s.replace(/\\n{3,}/g, '\\n\\n');\n};\n\nreturn $input.all().map((item, i) => {\n  const req = (asked[i] || asked[0]).json;\n  const res = item.json || {};\n  const base = { row_number: req.row_number, post_id: req.post_id, last_action_at: stamp };\n\n  if (res.error) {\n    const msg = errMsg(res.error);\n    // Hết quota / quá tải / mạng / sai API key: để nguyên NEED_TRANSLATE, lần sau tự thử lại.\n    if (/429|RESOURCE_EXHAUSTED|quota|50[0-9]|UNAVAILABLE|timeout|ETIMEDOUT|ECONNRESET|API.?key|PERMISSION_DENIED|401|403/i.test(msg)) {\n      return { json: { ...base, check_note: '⏳ Gemini tạm lỗi, sẽ tự thử lại: ' + msg } };\n    }\n    return { json: { ...base, status: 'ERROR', check_note: '❌ Gemini không dịch được: ' + msg + ' — dịch tay bằng menu 🌐 Dịch bằng AI (web).' } };\n  }\n\n  const cand = (res.candidates || [])[0] || {};\n  const parts = (cand.content && cand.content.parts) || [];\n  const text = clean(parts.filter((p) => !p.thought).map((p) => p.text || '').join(''));\n  const blocked = (res.promptFeedback && res.promptFeedback.blockReason)\n    || (/SAFETY|RECITATION|PROHIBITED|BLOCKLIST/.test(cand.finishReason || '') ? cand.finishReason : '');\n  if (!text || blocked) {\n    return { json: { ...base, status: 'ERROR', check_note: '❌ Gemini không trả bản dịch' + (blocked ? ' (bị chặn: ' + blocked + ')' : '') + ' — dịch tay bằng menu 🌐 Dịch bằng AI (web).' } };\n  }\n  const warn = cand.finishReason === 'MAX_TOKENS' ? ' ⚠️ Có thể bị cắt cụt (MAX_TOKENS) — đọc kỹ đoạn cuối.' : '';\n  return { json: {\n    ...base,\n    en_text: text.slice(0, 45000),\n    status: 'REVIEW',\n    check_note: '🤖 Gemini đã dịch ' + text.length + ' ký tự — đọc lại en_text rồi tick publish_now.' + warn,\n  } };\n});\n"
+      },
+      "id": "9c2c9f58-1085-a159-c2c9-f581085a1500",
+      "name": "Gắn bản dịch",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "1701161a-1087-6b21-7011-61a10876b200",
+      "name": "Sheets: Ghi bản dịch",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2660,
+        300
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2."
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "options": {}
+      },
+      "id": "dedd6c90-1046-9b4d-edd6-c9010469b400",
+      "name": "Sheets: Đọc Posts (đăng)",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1220,
+        870
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2.",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst minutes = Number(cfg.stuck_posting_minutes ?? 15);\nconst cutoff = nowIso(cfg.timezone, new Date(Date.now() - minutes * 60000));\nconst stamp = nowIso(cfg.timezone);\nconst out = [];\n$input.all().forEach((item, index) => {\n  const r = item.json || {};\n  if (String(r.status ?? '').trim().toUpperCase() !== 'POSTING') return;\n  const last = toSortable(r.last_action_at);\n  if (!last || last > cutoff) return; // không đọc được giờ => để yên, an toàn hơn\n  out.push({ json: {\n    row_number: rowNumberOf(r, index),\n    status: 'ERROR',\n    check_note: '⚠️ Kẹt ở POSTING quá ' + minutes + ' phút (lần cuối ' + last + '). Bài CÓ THỂ đã lên Page — kiểm tra Page trước khi đăng lại.',\n    publish_now: false,\n    last_action_at: stamp,\n  } });\n});\nreturn out;\n"
+      },
+      "id": "ee2615c1-03f1-13ee-2615-c103f1130000",
+      "name": "Tìm bài kẹt POSTING",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        1155
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "581f35dc-1077-3265-81f3-5dc107732600",
+      "name": "Sheets: Gỡ kẹt POSTING",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        1700,
+        1155
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2."
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst now = nowIso(cfg.timezone);\nconst candidates = [];\n$input.all().forEach((item, index) => {\n  const r = item.json || {};\n  const postId = String(r.post_id ?? '').trim();\n  if (!postId) return;\n  const status = String(r.status ?? '').trim().toUpperCase();\n  if (['POSTED', 'POSTING', 'SKIP'].includes(status)) return;\n  const manual = isTruthy(r.publish_now);\n  // Bài hẹn giờ đã ERROR thì chỉ đăng lại khi bạn tick tay (tránh thử lại vô hạn).\n  const scheduled = toSortable(r.scheduled_at);\n  const scheduledDue = status !== 'ERROR' && scheduled !== '' && scheduled <= now;\n  if (!manual && !scheduledDue) return;\n  candidates.push({ ...r, row_number: rowNumberOf(r, index), reason: manual ? 'tick publish_now' : 'đến giờ ' + scheduled, sort: manual ? '0' : scheduled });\n});\ncandidates.sort((a, b) => (a.sort < b.sort ? -1 : a.sort > b.sort ? 1 : 0));\nreturn candidates.slice(0, 1).map(({ sort, ...r }) => ({ json: r }));\n"
+      },
+      "id": "240ebc28-109e-df12-40eb-c28109edf100",
+      "name": "Chọn bài đến hạn",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1460,
+        870
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst cfg = $('Config').first().json;\nconst r = $json;\nconst minImages = Number(cfg.min_images ?? 1);\nconst maxImages = Math.min(Number(cfg.max_images ?? 10), 10);\nconst minChars = Number(cfg.min_content_chars ?? 50);\n\nconst message = String(r.en_text ?? '')\n  .replace(/^\\uFEFF/, '')\n  .replace(/\\r\\n/g, '\\n')\n  .replace(/\\n{3,}/g, '\\n\\n')\n  .trim();\nconst urls = String(r.source_images ?? '')\n  .split(/\\s+/)\n  .map((s) => s.trim())\n  .filter((s) => /^https?:\\/\\//i.test(s));\n\nconst errors = [];\nif (!message) {\n  errors.push(String(r.source_text ?? '').trim()\n    ? 'Chưa có bản dịch ở en_text (chờ Gemini, hoặc menu 🌐 Dịch bằng AI).'\n    : 'Chưa có nội dung ở en_text.');\n} else if (message.length < minChars) {\n  errors.push('Nội dung quá ngắn (' + message.length + ' ký tự, cần ≥ ' + minChars + ').');\n} else if (message.length > 60000) {\n  errors.push('Nội dung quá dài (' + message.length + ' ký tự, Facebook giới hạn ~63.206).');\n}\nif (urls.length < minImages) errors.push('Thiếu ảnh: cần tối thiểu ' + minImages + ' link ở source_images, hiện có ' + urls.length + '.');\nif (urls.length > maxImages) errors.push('Quá nhiều ảnh: Facebook cho tối đa ' + maxImages + ' ảnh/bài, hiện có ' + urls.length + '.');\n\nreturn [{ json: {\n  ok: errors.length === 0,\n  errors,\n  post_id: String(r.post_id ?? '').trim(),\n  row_number: r.row_number,\n  reason: r.reason,\n  message,\n  content_chars: message.length,\n  images: urls.map((url, i) => ({ url, order: i + 1 })),\n  images_count: urls.length,\n  timezone: cfg.timezone,\n} }];\n"
+      },
+      "id": "6636c1d8-102d-8bd6-636c-1d8102d8bd00",
+      "name": "Kiểm tra bài",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1700,
+        870
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c0",
+              "leftValue": "={{ $json.ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "fe37aecc-1090-27ff-e37a-ecc109027f00",
+      "name": "Đủ điều kiện đăng?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1940,
+        870
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst d = $json;\nreturn [{ json: {\n  row_number: d.row_number,\n  status: 'ERROR',\n  images_count: d.images_count,\n  check_note: '❌ ' + d.errors.join(' | '),\n  publish_now: false,\n  last_action_at: nowIso(d.timezone),\n} }];\n"
+      },
+      "id": "29918bfb-106b-2ba2-9918-bfb106b2ba00",
+      "name": "Soạn ghi chú lỗi",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        1060
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "b882b4b4-108d-366b-882b-4b4108d36600",
+      "name": "Sheets: Ghi lỗi kiểm tra",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2420,
+        1060
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2."
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst d = $json;\nreturn [{ json: {\n  row_number: d.row_number,\n  status: 'POSTING',\n  images_count: d.images_count,\n  check_note: '⏳ Đang đăng lên Facebook (' + d.reason + ')...',\n  publish_now: false,\n  last_action_at: nowIso(d.timezone),\n} }];\n"
+      },
+      "id": "1463fb01-0626-1914-63fb-010626190000",
+      "name": "Soạn trạng thái POSTING",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2180,
+        870
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "2f42cc4c-100c-7822-f42c-c4c100c78200",
+      "name": "Sheets: Ghi POSTING",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        2420,
+        870
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c0",
+              "leftValue": "={{ $('Kiểm tra bài').first().json.images_count }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "da69535c-102b-f89d-a695-35c102bf8900",
+      "name": "Có ảnh?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2660,
+        870
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "\nreturn $('Kiểm tra bài').first().json.images.map((img) => ({ json: img }));\n"
+      },
+      "id": "7ef1f5e2-1068-e797-ef1f-5e21068e7900",
+      "name": "Tách từng ảnh",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2900,
+        737
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.url }}",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "87902f2c-1083-17f8-7902-f2c108317f00",
+      "name": "Tải ảnh gốc",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3140,
+        737
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/{{ $('Config').first().json.graph_version }}/{{ $('Config').first().json.page_id }}/photos",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "published",
+              "value": "false"
+            },
+            {
+              "parameterType": "formBinaryData",
+              "name": "source",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "f9bbcc4b-104d-b03f-9bbc-c4b104db0300",
+      "name": "FB: Upload ảnh (chưa publish)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3380,
+        737
+      ],
+      "notes": "Cần chọn credential: Facebook Graph API — dán PAGE ACCESS TOKEN dài hạn.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst d = $('Kiểm tra bài').first().json;\nconst safeAll = (name) => {\n  if (!d.images_count) return []; // bài không ảnh: không đọc dữ liệu node ảnh\n  try {\n    return $(name).all();\n  } catch (e) {\n    return [];\n  }\n};\nconst uploads = safeAll('FB: Upload ảnh (chưa publish)').map((i) => i.json || {});\nconst media = uploads.map((r) => r.id).filter(Boolean);\n\nconst problems = [];\nsafeAll('Tải ảnh gốc').forEach((it, i) => {\n  const e = it.json && it.json.error;\n  if (e) problems.push('tải ảnh ' + (i + 1) + ' lỗi: ' + errMsg(e) + ' (link ảnh Facebook chỉ sống vài ngày — lấy lại link mới)');\n});\nif (!problems.length) {\n  uploads.forEach((r, i) => {\n    if (!r.id) problems.push('upload ảnh ' + (i + 1) + ' lỗi: ' + errMsg(r.error));\n  });\n}\n\nconst payload = { message: d.message };\nif (media.length) payload.attached_media = media.map((id) => ({ media_fbid: String(id) }));\nconst enough = media.length === Number(d.images_count);\nreturn [{ json: {\n  ...d,\n  media_ids: media,\n  payload,\n  upload_ok: enough,\n  error: enough ? undefined : {\n    message: 'Chỉ upload được ' + media.length + '/' + d.images_count + ' ảnh lên Facebook, huỷ đăng để tránh bài thiếu ảnh.'\n      + (problems.length ? ' ' + problems.slice(0, 3).join(' | ') : ''),\n  },\n} }];\n"
+      },
+      "id": "e2e59864-1037-3efe-2e59-86410373ef00",
+      "name": "Soạn payload bài đăng",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3620,
+        870
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c0",
+              "leftValue": "={{ $json.upload_ok }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "id": "219179f5-106d-8b12-1917-9f5106d8b100",
+      "name": "Upload đủ ảnh?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3860,
+        870
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://graph.facebook.com/{{ $('Config').first().json.graph_version }}/{{ $('Config').first().json.page_id }}/feed",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.payload) }}",
+        "options": {}
+      },
+      "id": "cd722944-1039-da3c-d722-9441039da300",
+      "name": "FB: Tạo bài trên Page",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4100,
+        870
+      ],
+      "notes": "Cần chọn credential: Facebook Graph API — dán PAGE ACCESS TOKEN dài hạn.",
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "url": "=https://graph.facebook.com/{{ $('Config').first().json.graph_version }}/{{ $json.id }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "facebookGraphApi",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "fields",
+              "value": "permalink_url"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "56308ed0-1035-eb15-6308-ed01035eb100",
+      "name": "FB: Lấy permalink",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4340,
+        870
+      ],
+      "notes": "Cần chọn credential: Facebook Graph API — dán PAGE ACCESS TOKEN dài hạn.",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst d = $('Kiểm tra bài').first().json;\nconst created = $('FB: Tạo bài trên Page').first().json || {};\nconst info = $json || {};\nconst fbId = String(created.id || info.id || '');\nconst link = info.permalink_url || (fbId ? 'https://www.facebook.com/' + fbId.replace('_', '/posts/') : '');\nreturn [{ json: {\n  row_number: d.row_number,\n  status: 'POSTED',\n  images_count: d.images_count,\n  check_note: '✅ Đã đăng ' + d.images_count + ' ảnh + ' + d.content_chars + ' ký tự.',\n  posted_at: nowIso(d.timezone),\n  fb_post_id: fbId,\n  fb_permalink: link,\n  publish_now: false,\n  last_action_at: nowIso(d.timezone),\n} }];\n"
+      },
+      "id": "67d0f6b9-1061-9386-7d0f-6b9106193800",
+      "name": "Soạn trạng thái POSTED",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4580,
+        870
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "c1991cbc-100b-bf5c-1991-cbc100bbf500",
+      "name": "Sheets: Ghi POSTED",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4820,
+        870
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2."
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst TRUTHY = ['true', 'yes', 'y', 'x', '1', 'co', 'có', 'on', 'checked'];\nconst isTruthy = (v) => TRUTHY.includes(String(v ?? '').trim().toLowerCase());\nconst nowIso = (tz, d = new Date()) => {\n  try {\n    const p = new Intl.DateTimeFormat('sv-SE', { timeZone: tz || 'UTC', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false }).formatToParts(d);\n    const g = (t) => p.find((x) => x.type === t).value;\n    return g('year') + '-' + g('month') + '-' + g('day') + ' ' + g('hour') + ':' + g('minute') + ':' + g('second');\n  } catch (e) {\n    return d.toISOString().slice(0, 19).replace('T', ' ');\n  }\n};\nconst rowNumberOf = (row, index) => Number(row.row_number ?? row.rowNumber ?? index + 2);\n// Đưa ngày giờ đọc từ Sheet về dạng \"YYYY-MM-DD HH:mm:ss\" để so sánh chuỗi.\n// Sheet có thể trả: chuỗi ISO, \"31/01/2026 08:30\" (locale Việt Nam) hoặc số serial.\n// Không hiểu được => '' (người gọi coi như không có giá trị).\nconst toSortable = (v) => {\n  if (v === null || v === undefined || v === '') return '';\n  const pad = (x) => String(x ?? 0).padStart(2, '0');\n  const fmt = (y, mo, d, h, mi, s) => y + '-' + pad(mo) + '-' + pad(d) + ' ' + pad(h) + ':' + pad(mi) + ':' + pad(s);\n  if (typeof v === 'number' && isFinite(v)) {\n    // Serial của Google Sheets là giờ địa phương => đọc như UTC để giữ nguyên giờ.\n    return new Date(Math.round((v - 25569) * 86400000)).toISOString().slice(0, 19).replace('T', ' ');\n  }\n  const s = String(v).trim();\n  let m = s.match(/^(\\d{4})-(\\d{1,2})-(\\d{1,2})(?:[ T](\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[1], m[2], m[3], m[4], m[5], m[6]);\n  m = s.match(/^(\\d{1,2})\\/(\\d{1,2})\\/(\\d{4})(?:,?\\s+(\\d{1,2}):(\\d{2})(?::(\\d{2}))?)?/);\n  if (m) return fmt(m[3], m[2], m[1], m[4], m[5], m[6]);\n  return '';\n};\nconst errMsg = (e) => {\n  if (!e) return 'không rõ lỗi';\n  if (typeof e === 'string') return e;\n  return String(e.message || e.description || e.error_user_msg || JSON.stringify(e)).slice(0, 300);\n};\nconst d = $('Kiểm tra bài').first().json;\nconst err = $json || {};\nconst detail = (err.error && (err.error.message || err.error.error_user_msg))\n  || err.message\n  || (typeof err === 'string' ? err : JSON.stringify(err).slice(0, 400));\nreturn [{ json: {\n  row_number: d.row_number,\n  status: 'ERROR',\n  images_count: d.images_count,\n  check_note: '❌ Facebook từ chối: ' + detail,\n  publish_now: false,\n  last_action_at: nowIso(d.timezone),\n} }];\n"
+      },
+      "id": "b3caef41-105c-186b-3cae-f41105c18600",
+      "name": "Soạn lỗi Facebook",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4340,
+        1155
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "={{ $('Config').first().json.sheet_id }}",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "Posts",
+          "mode": "name"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": []
+        },
+        "options": {
+          "cellFormat": "RAW"
+        }
+      },
+      "id": "1ef91130-104a-f381-ef91-130104af3800",
+      "name": "Sheets: Ghi lỗi Facebook",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.5,
+      "position": [
+        4580,
+        1155
+      ],
+      "notes": "Cần chọn credential: Google Sheets OAuth2."
+    }
+  ],
+  "connections": {
+    "Mỗi 4 giờ: thu bài": {
+      "main": [
+        [
+          {
+            "node": "Việc: thu bài",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Việc: thu bài": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mỗi 5 phút: dịch": {
+      "main": [
+        [
+          {
+            "node": "Việc: dịch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Việc: dịch": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mỗi 2 phút: đăng": {
+      "main": [
+        [
+          {
+            "node": "Việc: đăng",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Việc: đăng": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Chọn việc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chọn việc": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Đọc Posts (thu)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sheets: Đọc Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Sheets: Đọc Posts (đăng)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets: Đọc Posts (thu)": {
+      "main": [
+        [
+          {
+            "node": "Gom bài đã có",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gom bài đã có": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Đọc Sources",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets: Đọc Sources": {
+      "main": [
+        [
+          {
+            "node": "Lọc nguồn đang bật",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lọc nguồn đang bật": {
+      "main": [
+        [
+          {
+            "node": "Crawler: Lấy bài của page",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crawler: Lấy bài của page": {
+      "main": [
+        [
+          {
+            "node": "Chuẩn hoá bài crawler",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chuẩn hoá bài crawler": {
+      "main": [
+        [
+          {
+            "node": "Bỏ trùng + tạo post_id",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Bỏ trùng + tạo post_id": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Thêm bài mới",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets: Đọc Prompt": {
+      "main": [
+        [
+          {
+            "node": "Lấy prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Lấy prompt": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Đọc Posts (dịch)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets: Đọc Posts (dịch)": {
+      "main": [
+        [
+          {
+            "node": "Chọn bài cần dịch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chọn bài cần dịch": {
+      "main": [
+        [
+          {
+            "node": "Gemini: Dịch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini: Dịch": {
+      "main": [
+        [
+          {
+            "node": "Gắn bản dịch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gắn bản dịch": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Ghi bản dịch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets: Đọc Posts (đăng)": {
+      "main": [
+        [
+          {
+            "node": "Tìm bài kẹt POSTING",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Chọn bài đến hạn",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tìm bài kẹt POSTING": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Gỡ kẹt POSTING",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chọn bài đến hạn": {
+      "main": [
+        [
+          {
+            "node": "Kiểm tra bài",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Kiểm tra bài": {
+      "main": [
+        [
+          {
+            "node": "Đủ điều kiện đăng?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Đủ điều kiện đăng?": {
+      "main": [
+        [
+          {
+            "node": "Soạn trạng thái POSTING",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Soạn ghi chú lỗi",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Soạn ghi chú lỗi": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Ghi lỗi kiểm tra",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Soạn trạng thái POSTING": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Ghi POSTING",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets: Ghi POSTING": {
+      "main": [
+        [
+          {
+            "node": "Có ảnh?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Có ảnh?": {
+      "main": [
+        [
+          {
+            "node": "Tách từng ảnh",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Soạn payload bài đăng",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tách từng ảnh": {
+      "main": [
+        [
+          {
+            "node": "Tải ảnh gốc",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tải ảnh gốc": {
+      "main": [
+        [
+          {
+            "node": "FB: Upload ảnh (chưa publish)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FB: Upload ảnh (chưa publish)": {
+      "main": [
+        [
+          {
+            "node": "Soạn payload bài đăng",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Soạn payload bài đăng": {
+      "main": [
+        [
+          {
+            "node": "Upload đủ ảnh?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload đủ ảnh?": {
+      "main": [
+        [
+          {
+            "node": "FB: Tạo bài trên Page",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Soạn lỗi Facebook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FB: Tạo bài trên Page": {
+      "main": [
+        [
+          {
+            "node": "FB: Lấy permalink",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Soạn lỗi Facebook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "FB: Lấy permalink": {
+      "main": [
+        [
+          {
+            "node": "Soạn trạng thái POSTED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Soạn trạng thái POSTED": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Ghi POSTED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Soạn lỗi Facebook": {
+      "main": [
+        [
+          {
+            "node": "Sheets: Ghi lỗi Facebook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
